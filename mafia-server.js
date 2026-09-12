@@ -1,3 +1,6 @@
+// Ключ берём из конверта ~/.env (в домашней папке, НЕ в репозитории).
+require("dotenv").config({ path: require("path").join(require("os").homedir(), ".env") });
+
 // ─────────────────────────────────────────────────────────────────────────
 //  МАФИЯ — серверная текстовая версия. 8 ИИ играют сами, лог в консоль.
 //  Запуск:  PROVIDER=groq GROQ_API_KEY=xxx node mafia-server.js
@@ -22,7 +25,7 @@ const PROVIDERS = {
 // Цены за 1М токенов (вход/выход) — для оценки стоимости партии. Приблизительно.
 const PRICES = {
   "llama-3.3-70b-versatile": { in: 0.59, out: 0.79 },
-  "deepseek-v4-flash":       { in: 0.22, out: 0.66 },
+  "deepseek-v4-flash":       { in: 0.14, out: 0.28 },
   "grok-4-fast":             { in: 0.20, out: 0.50 },
   "openai/gpt-oss-120b":     { in: 0.15, out: 0.60 },
   "mock":                    { in: 0, out: 0 },
@@ -32,6 +35,39 @@ const PRICES = {
 const A = (code, s) => `\x1b[38;5;${code}m${s}\x1b[0m`;
 const DIM = (s) => `\x1b[2m${s}\x1b[0m`;
 const BOLD = (s) => `\x1b[1m${s}\x1b[0m`;
+
+// ── ВЕБ-СЕРВЕР: живая труба сервер → браузер (SSE) ──────────────────────
+const express = require("express");
+const PORT = process.env.PORT || 3000;
+let clients = [];        // открытые вкладки-наблюдатели
+let eventBuffer = [];    // вся партия целиком — чтобы обновлённая вкладка видела с начала
+let gameStarted = false;
+
+// послать событие всем открытым вкладкам (и запомнить в буфер)
+function broadcast(ev) {
+  eventBuffer.push(ev);
+  const data = `data: ${JSON.stringify(ev)}\n\n`;
+  clients.forEach((res) => res.write(data));
+}
+
+function startWeb(onFirstViewer) {
+  const app = express();
+  app.use(express.static(require("path").join(__dirname, "public")));
+
+  app.get("/events", (req, res) => {
+    res.writeHead(200, { "Content-Type": "text/event-stream", "Cache-Control": "no-cache", Connection: "keep-alive" });
+    res.write("\n");
+    eventBuffer.forEach((ev) => res.write(`data: ${JSON.stringify(ev)}\n\n`)); // проигрываем уже случившееся
+    clients.push(res);
+    req.on("close", () => { clients = clients.filter((c) => c !== res); });
+    if (!gameStarted) { gameStarted = true; onFirstViewer(); } // первый зритель запускает партию
+  });
+
+  app.listen(PORT, () => {
+    console.log(BOLD(`\n🌐 Веб-сервер поднят на порту ${PORT}. Открой в браузере адрес сервера с :${PORT}`));
+    console.log(DIM("   Партия начнётся, как только откроется вкладка.\n"));
+  });
+}
 
 // ── Персонажи ───────────────────────────────────────────────────────────
 const POOL = [
@@ -76,7 +112,7 @@ async function callModel(prompt) {
   const res = await fetch(cfg.url, {
     method: "POST",
     headers: { "Content-Type": "application/json", Authorization: `Bearer ${key}` },
-    body: JSON.stringify({ model: cfg.model, temperature: TEMPERATURE, max_tokens: MAX_TOKENS, messages: [{ role: "user", content: prompt }] }),
+    body: JSON.stringify({ model: cfg.model, temperature: TEMPERATURE, max_tokens: MAX_TOKENS, messages: [{ role: "user", content: prompt }], ...(PROVIDER === "deepseek" ? { thinking: { type: "disabled" } } : {}) }),
   });
   if (!res.ok) throw new Error(`HTTP ${res.status}: ${(await res.text()).slice(0, 200)}`);
   const data = await res.json();
@@ -105,15 +141,15 @@ const living = () => G.players.filter((p) => p.alive);
 const byName = (n) => G.players.find((p) => p.name === n);
 
 // печать + запись в публичный лог (для контекста)
-function pub(kind, obj) { G.log.push({ kind, ...obj }); printLine({ kind, ...obj }); }
+function pub(kind, obj) { G.log.push({ kind, ...obj }); printLine({ kind, ...obj }); broadcast({ type: kind, ...obj }); }
 function narrator(text) { pub("narrator", { text }); }
 function result(text, red) { pub("result", { text, red }); }
 function say(p, text) { pub("say", { name: p.name, c: p.c, text }); }
 function silence(p) { pub("silence", { name: p.name }); }
 function vote(voter, target, reason) { pub("vote", { voter, target, reason }); }
-function secretPM(channel, from, text) { if (SHOW_SECRETS) console.log(DIM(`   🔒 ${channel === "mafia" ? "мафия" : "шёпот"} · ${from}: ${text}`)); }
-function secretThought(name, text) { if (SHOW_SECRETS) console.log(DIM(`   💭 ${name}: ${text.replace(/\n/g, " ")}`)); }
-function secretAct(text) { if (SHOW_SECRETS) console.log(DIM(`   ${text}`)); }
+function secretPM(channel, from, text) { if (SHOW_SECRETS) { console.log(DIM(`   🔒 ${channel === "mafia" ? "мафия" : "шёпот"} · ${from}: ${text}`)); broadcast({ type: "pm", channel, from, text }); } }
+function secretThought(name, text) { if (SHOW_SECRETS) { const t = text.replace(/\n/g, " "); console.log(DIM(`   💭 ${name}: ${t}`)); broadcast({ type: "think", name, text: t }); } }
+function secretAct(text) { if (SHOW_SECRETS) { console.log(DIM(`   ${text}`)); broadcast({ type: "act", text }); } }
 
 function printLine(e) {
   if (e.kind === "narrator") console.log(DIM(A(153, e.text)));
@@ -259,9 +295,10 @@ async function doNight() {
 }
 
 function announceDead() {
+  broadcast({ type: "day", day: G.day });
   narrator(`\n☀️ День ${G.day}.`);
   if (!G.lastDead.length) result("Ночь прошла тихо — все живы.");
-  else G.lastDead.forEach((d) => result(`Ночью убили ${d.name}. ${d.name} — ${roleName(d.revealed)}.`, d.revealed === "mafia" || d.revealed === "maniac"));
+  else G.lastDead.forEach((d) => { result(`Ночью убили ${d.name}. ${d.name} — ${roleName(d.revealed)}.`, d.revealed === "mafia" || d.revealed === "maniac"); broadcast({ type: "dead", name: d.name }); });
   G.lastDead = [];
 }
 
@@ -292,6 +329,7 @@ async function doVote() {
   const lynched = byName(shuffle(Object.keys(tally).filter((n) => tally[n] === max))[0]);
   lynched.alive = false; lynched.revealed = lynched.role;
   result(`Казнён ${lynched.name} (${max} гол.). ${lynched.name} — ${roleName(lynched.revealed)}.`, lynched.revealed === "mafia" || lynched.revealed === "maniac");
+  broadcast({ type: "dead", name: lynched.name });
 }
 
 function checkWin() {
@@ -305,9 +343,11 @@ function checkWin() {
 
 function endGame() {
   const w = G.winner;
+  const txt = w === "town" ? "🏆 ДЕРЕВНЯ ПОБЕДИЛА." : w === "mafia" ? "🔪 МАФИЯ ПОБЕДИЛА." : "🩸 МАНЬЯК ПОБЕДИЛ.";
   console.log("");
-  result(w === "town" ? "🏆 ДЕРЕВНЯ ПОБЕДИЛА." : w === "mafia" ? "🔪 МАФИЯ ПОБЕДИЛА." : "🩸 МАНЬЯК ПОБЕДИЛ.", w !== "town");
+  result(txt, w !== "town");
   console.log(DIM("Расклад: " + G.players.map((p) => `${p.name}=${roleName(p.role)}`).join(", ")));
+  broadcast({ type: "gameover", text: txt });
 }
 
 function printCost() {
@@ -326,6 +366,9 @@ async function gameLoop() {
   G.players.forEach((p) => (G.priv[p.name] = { checks: [], kills: [], saves: [], notes: [] }));
   const roles = shuffle(["mafia", "mafia", "maniac", "komissar", "doctor", "civilian", "civilian", "civilian"]);
   G.players.forEach((p, i) => (p.role = roles[i]));
+
+  broadcast({ type: "reset" });
+  broadcast({ type: "roster", day: G.day, players: G.players.map((p) => ({ name: p.name, c: p.c, role: p.role, alive: true })) });
 
   console.log(BOLD(`\n════ МАФИЯ · провайдер: ${PROVIDER} · модель: ${PROVIDERS[PROVIDER].model} ════`));
   if (SHOW_SECRETS) {
@@ -347,4 +390,10 @@ async function gameLoop() {
   printCost();
 }
 
-gameLoop().catch((e) => { console.error("ФАТАЛЬНО:", e); process.exit(1); });
+// Поднимаем веб-сервер; партия стартует, как только откроется первая вкладка.
+startWeb(() => {
+  gameLoop().catch((e) => {
+    console.error("ФАТАЛЬНО:", e);
+    broadcast({ type: "result", text: "Ошибка сервера: " + e.message, red: true });
+  });
+});
