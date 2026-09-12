@@ -1,0 +1,336 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>МАФИЯ · глаз бога</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Pixelify+Sans:wght@500;700&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --sage:#b7bdae;         /* фон-подложка */
+    --paper:#f2efe6;        /* панели-бумага */
+    --paper-2:#e9e5d8;      /* панель темнее */
+    --ink:#2c2c28;          /* тёмная рамка/текст */
+    --ink-soft:#5a5a52;
+    --line:#2c2c28;
+    /* фракции */
+    --mafia-bg:#f6d9d8; --mafia-br:#d98f8c; --mafia-tx:#b5352c;
+    --think-bg:#d9e6f1; --think-br:#a7c3dc; --think-tx:#2a6aa0;
+    --whisp-bg:#ece1f0; --whisp-br:#c3a9d0; --whisp-tx:#7a4a95;
+    --dead-bg:#f4e7a6; --dead-br:#d4bd4c; --dead-tx:#7a5c12;
+    --act-bg:#e6e2d6; --act-br:#bdb8a6; --act-tx:#6a4a2a;
+    --narr:#71818f;
+    --good:#2f8f4e;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;height:100%}
+  body{
+    background:var(--sage);
+    font-family:ui-monospace,"DejaVu Sans Mono","Cascadia Mono",Consolas,"Liberation Mono",monospace;
+    color:var(--ink);
+    display:flex;justify-content:center;
+    padding:14px;
+    -webkit-font-smoothing:none;
+  }
+  .machine{
+    width:100%;max-width:680px;display:flex;flex-direction:column;gap:10px;
+    height:calc(100vh - 28px);
+  }
+  .pixel{font-family:"Pixelify Sans",ui-monospace,monospace;}
+
+  /* панель-каркас с «толстой» пиксельной рамкой */
+  .panel{
+    background:var(--paper);
+    border:3px solid var(--line);
+    box-shadow:inset 0 0 0 2px var(--paper), 4px 4px 0 rgba(44,44,40,.18);
+  }
+
+  /* ── верхняя панель ─────────────────────────── */
+  .topbar{display:flex;align-items:stretch;gap:8px;padding:8px}
+  .title{
+    display:flex;align-items:center;padding:6px 14px;
+    background:var(--paper-2);border:2px solid var(--line);
+    font-size:26px;font-weight:700;letter-spacing:1px;
+  }
+  .chip{
+    display:flex;align-items:center;gap:7px;padding:6px 12px;
+    background:var(--paper-2);border:2px solid var(--line);
+    font-size:14px;font-weight:600;white-space:nowrap;
+  }
+  .chip.day{color:#a6791f}
+  .chip.mode{margin-left:auto;color:#3d3d3d}
+  .chip .eye{font-size:15px}
+
+  /* ── ряд участников ─────────────────────────── */
+  .seatsWrap{padding:8px}
+  .seats{display:flex;gap:6px;overflow-x:auto;padding-bottom:2px}
+  .seat{
+    flex:0 0 auto;width:88px;text-align:center;
+    background:var(--paper-2);border:2px solid var(--line);
+    padding:7px 5px 6px;position:relative;
+  }
+  .ava{
+    width:60px;height:60px;margin:0 auto 5px;
+    display:flex;align-items:center;justify-content:center;
+    border:2px solid var(--line);
+    font-size:30px;font-weight:700;color:#1c1c1c;
+  }
+  .seat .nm{font-size:12px;line-height:1.1;height:24px;overflow:hidden;font-weight:700}
+  .seat .role{font-size:11px;margin-top:2px;letter-spacing:.3px;font-weight:700}
+  .bar{height:6px;margin-top:4px;border:1px solid var(--line);background:#cfcabc}
+  .bar > i{display:block;height:100%;background:var(--good);width:100%}
+  .seat.dead{opacity:.55;filter:grayscale(.7)}
+  .seat.dead .bar > i{width:0}
+  .seat.dead .ava::after{
+    content:"✕";position:absolute;color:#b5352c;font-size:30px;font-weight:700;
+    left:0;right:0;top:6px;text-align:center;
+  }
+  .ava{position:relative}
+
+  /* ── строка-сводка сил ──────────────────────── */
+  .summary{
+    padding:9px 12px;font-size:13px;font-weight:600;
+    display:flex;flex-wrap:wrap;gap:4px 14px;align-items:center;
+    background:var(--paper-2);
+  }
+  .summary .sep{color:#9a968a}
+  .summary .ok{color:var(--good)}
+  .summary .no{color:#b5352c;text-decoration:line-through}
+
+  /* ── лента событий ──────────────────────────── */
+  .feedWrap{flex:1;min-height:0;padding:8px;display:flex}
+  .feed{
+    flex:1;overflow-y:auto;padding:4px 10px 4px 4px;
+    display:flex;flex-direction:column;gap:9px;
+  }
+  .ev{animation:pop .22s ease-out}
+  @keyframes pop{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:none}}
+  @media (prefers-reduced-motion:reduce){.ev{animation:none}}
+
+  .narr{text-align:center;color:var(--narr);font-size:13px;padding:2px 0}
+  .narr::before{content:"— "}.narr::after{content:" —"}
+
+  .plaque{border:2px solid var(--line);padding:9px 11px;font-size:14px;line-height:1.5}
+  .plaque .who{font-weight:700;margin-bottom:3px;display:flex;align-items:center;gap:7px}
+  .plaque .who .tag{
+    font-family:"Pixelify Sans",monospace;font-size:11px;font-weight:700;
+    padding:1px 6px;border:2px solid;border-radius:2px;
+  }
+  .say{background:var(--paper)}
+  .say .who .nm{font-weight:700}
+  .think{background:var(--think-bg);border-color:var(--think-br)}
+  .think .who{color:var(--think-tx)}
+  .think .who::after{content:"думает";font-weight:600;opacity:.7;font-size:12px}
+  .mafia{background:var(--mafia-bg);border-color:var(--mafia-br)}
+  .mafia .who{color:var(--mafia-tx)}
+  .mafia .who .tag{background:var(--mafia-bg);border-color:var(--mafia-tx);color:var(--mafia-tx)}
+  .whisper{background:var(--whisp-bg);border-color:var(--whisp-br)}
+  .whisper .who{color:var(--whisp-tx)}
+  .whisper .who .tag{background:var(--whisp-bg);border-color:var(--whisp-tx);color:var(--whisp-tx)}
+  .act{background:var(--act-bg);border-color:var(--act-br);color:var(--act-tx);font-size:13px;padding:6px 11px}
+  .death{background:var(--dead-bg);border-color:var(--dead-br);color:var(--dead-tx);font-weight:700;display:flex;gap:10px;align-items:center}
+  .death .skull{font-size:20px}
+  .vote{color:var(--ink-soft);font-size:13px;padding:2px 4px}
+  .vote b{color:var(--ink)}
+  .over{background:var(--ink);color:var(--paper);text-align:center;font-weight:700;padding:14px;font-size:16px}
+
+  .conn{position:fixed;top:6px;right:10px;font-size:11px;color:#5a5a52;
+    background:var(--paper);border:2px solid var(--line);padding:2px 8px}
+  .conn.live{color:var(--good)}
+  .conn.demo{color:#a6791f}
+
+  .feed::-webkit-scrollbar{width:12px}
+  .feed::-webkit-scrollbar-thumb{background:var(--paper-2);border:2px solid var(--line)}
+</style>
+</head>
+<body>
+  <div class="conn" id="conn">подключение…</div>
+  <div class="machine">
+
+    <div class="panel topbar">
+      <div class="title pixel">МАФИЯ</div>
+      <div class="chip day pixel"><span>☀</span><span id="dayLabel">День 1</span></div>
+      <div class="chip mode pixel"><span class="eye">👁</span><span>Глаз бога</span></div>
+    </div>
+
+    <div class="panel seatsWrap">
+      <div class="seats" id="seats"></div>
+    </div>
+
+    <div class="panel summary" id="summary">
+      <span>Партия ещё не началась</span>
+    </div>
+
+    <div class="panel feedWrap">
+      <div class="feed" id="feed"></div>
+    </div>
+
+  </div>
+
+<script>
+// ── палитра: xterm-256 → [r,g,b] (движок присылает числовой код цвета) ───────
+function rgb(code){
+  code=+code;
+  if(code>=16 && code<=231){
+    const n=code-16, r=Math.floor(n/36), g=Math.floor((n%36)/6), b=n%6;
+    const v=x=>x?55+40*x:0;
+    return [v(r),v(g),v(b)];
+  }
+  if(code>=232){const g=8+10*(code-232);return [g,g,g];}
+  return [136,136,136];
+}
+// насыщенный тёмный вариант — чтобы имена/роли не бледнили на светлой бумаге
+function deep(code){
+  let [r,g,b]=rgb(code);
+  const f=.60;                          // притемняем
+  r=Math.round(r*f);g=Math.round(g*f);b=Math.round(b*f);
+  return `rgb(${r},${g},${b})`;
+}
+function fill(code){const [r,g,b]=rgb(code);return `rgba(${r},${g},${b},.28)`;}
+function line(code){return deep(code);}
+
+const feed=document.getElementById('feed');
+const seatsEl=document.getElementById('seats');
+const summaryEl=document.getElementById('summary');
+const dayLabel=document.getElementById('dayLabel');
+const connEl=document.getElementById('conn');
+
+let players=[];            // [{name,c,role,alive}]
+const roleRu={mafia:"Мафия",maniac:"Маньяк",komissar:"Комиссар",doctor:"Доктор",civilian:"Мирный"};
+
+function render(){
+  seatsEl.innerHTML="";
+  players.forEach(p=>{
+    const seat=document.createElement('div');
+    seat.className="seat"+(p.alive?"":" dead");
+    seat.innerHTML=`
+      <div class="ava" style="background:${fill(p.c)};border-color:${line(p.c)}">${(p.name||'?')[0]}</div>
+      <div class="nm" style="color:${deep(p.c)}">${p.name}</div>
+      <div class="role" style="color:${deep(p.c)}">${roleRu[p.role]||''}</div>
+      <div class="bar"><i></i></div>`;
+    seatsEl.appendChild(seat);
+  });
+  renderSummary();
+}
+
+function renderSummary(){
+  if(!players.length){summaryEl.innerHTML="<span>Партия ещё не началась</span>";return;}
+  const alive=players.filter(p=>p.alive);
+  const c=r=>alive.filter(p=>p.role===r).length;
+  const flag=(lbl,r)=> c(r)>0
+    ? `<span class="ok">${lbl} ✓</span>`
+    : `<span class="no">${lbl}</span>`;
+  summaryEl.innerHTML=
+    `<span>Живых: <b>${alive.length}</b></span><span class="sep">·</span>`+
+    `<span>Мафия: <b>${c('mafia')}</b></span><span class="sep">·</span>`+
+    `<span>Маньяк: <b>${c('maniac')}</b></span><span class="sep">·</span>`+
+    `🔍 ${flag('Комиссар','komissar')}<span class="sep">·</span>`+
+    `🩺 ${flag('Доктор','doctor')}`;
+}
+
+function atBottom(){return feed.scrollHeight-feed.scrollTop-feed.clientHeight<60;}
+function add(node){
+  const stick=atBottom();
+  node.classList.add('ev');
+  feed.appendChild(node);
+  if(stick) feed.scrollTop=feed.scrollHeight;
+}
+function el(cls,html){const d=document.createElement('div');d.className=cls;d.innerHTML=html;return d;}
+const esc=s=>String(s).replace(/[&<>]/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[m]));
+
+// ── обработка событий от сервера ────────────────────────────────────────────
+function handle(e){
+  switch(e.type){
+    case "reset":
+      players=[];feed.innerHTML="";render();dayLabel.textContent="День 1";break;
+    case "roster":
+      players=e.players.map(p=>({name:p.name,c:p.c,role:p.role,alive:p.alive!==false}));
+      if(e.day)dayLabel.textContent="День "+e.day;
+      render();break;
+    case "day":
+      dayLabel.textContent="День "+e.day;break;
+    case "dead":{
+      const p=players.find(x=>x.name===e.name);if(p)p.alive=false;render();break;}
+    case "narrator":
+      add(el("narr",esc(e.text)));break;
+    case "say":{
+      const col=deep(e.c);
+      add(el("plaque say",
+        `<div class="who"><span class="nm" style="color:${col}">${esc(e.name)}</span></div>`+
+        `<div>${esc(e.text)}</div>`));break;}
+    case "silence":
+      add(el("narr",esc(e.name)+" промолчал…"));break;
+    case "think":
+      add(el("plaque think",
+        `<div class="who">${esc(e.name)}</div><div>${esc(e.text)}</div>`));break;
+    case "pm":{
+      const mafia=e.channel==="mafia";
+      add(el("plaque "+(mafia?"mafia":"whisper"),
+        `<div class="who"><span class="tag">${mafia?"мафия":"шёпот"}</span>${esc(e.from)}</div>`+
+        `<div>${esc(e.text)}</div>`));break;}
+    case "act":
+      add(el("act",esc(e.text)));break;
+    case "result":
+      add(el("plaque death",
+        `<span class="skull">💀</span><span>${esc(e.text)}</span>`));break;
+    case "vote":
+      add(el("vote",`${esc(e.voter)} → <b>${esc(e.target)}</b>`+(e.reason?` · ${esc(e.reason)}`:"")));break;
+    case "gameover":
+      add(el("over",esc(e.text)));break;
+  }
+}
+
+// ── связь с сервером (SSE) + демо-заглушка, если сервера ещё нет ─────────────
+let gotReal=false, demoTimer=null;
+function connect(){
+  let src;
+  try{ src=new EventSource('/events'); }catch(_){ return startDemo(); }
+  src.onmessage=ev=>{
+    if(!gotReal){gotReal=true;stopDemo();connEl.textContent="● эфир";connEl.className="conn live";}
+    try{handle(JSON.parse(ev.data));}catch(_){}
+  };
+  src.onerror=()=>{ if(!gotReal) startDemo(); };
+}
+
+// демо крутит короткий сценарий — чтобы видеть оформление без сервера
+function startDemo(){
+  if(demoTimer||gotReal)return;
+  connEl.textContent="◐ демо (сервер не подключён)";connEl.className="conn demo";
+  let i=0;
+  const script=[
+    {type:"reset"},
+    {type:"roster",day:1,players:[
+      {name:"МируМир",c:80,role:"mafia"},{name:"СеСтруХа",c:211,role:"civilian"},
+      {name:"Тень",c:145,role:"mafia"},{name:"ПрофеССор",c:183,role:"komissar"},
+      {name:"КабанЪ",c:179,role:"maniac"},{name:"Фурия",c:211,role:"civilian"},
+      {name:"Кекс228",c:114,role:"doctor"},{name:"Трубач",c:111,role:"civilian"}]},
+    {type:"narrator",text:"Ночь 1. Деревня засыпает."},
+    {type:"pm",channel:"mafia",from:"МируМир",text:"Тень, предлагаю убить Фурию — активные всегда опасны. Днём держимся порознь, изображаем мирных."},
+    {type:"pm",channel:"mafia",from:"Тень",text:"Согласна. Днём я первая скажу, что она давила слишком уверенно."},
+    {type:"act",text:"🔪 мафия целится в: Трубач"},
+    {type:"act",text:"🩺 доктор (Кекс228) лечит: Кекс228"},
+    {type:"act",text:"🔍 комиссар (ПрофеССор) проверяет: Тень → МАФИЯ"},
+    {type:"day",day:1},
+    {type:"narrator",text:"День 1."},
+    {type:"result",text:"Ночью убили Трубач. Трубач — Мирный."},
+    {type:"dead",name:"Трубач"},
+    {type:"narrator",text:"круг обсуждения 1/2"},
+    {type:"think",name:"КабанЪ",text:"Трубач убит — он мирный. Один труп, всё ровно, доктор явно кого-то прикрыл. Тяну игру, я маньяк."},
+    {type:"say",name:"КабанЪ",c:179,text:"Ну чё, кто-то ж мочканул Трубача. Я спал как убитый, зуб даю."},
+    {type:"say",name:"ПрофеССор",c:183,text:"Тень, ты подозрительно тихо себя ведёшь. Присмотримся к тебе."},
+    {type:"vote",voter:"Фурия",target:"Тень",reason:"молчит весь день"},
+    {type:"gameover",text:"🏆 ДЕРЕВНЯ ПОБЕДИЛА"},
+  ];
+  demoTimer=setInterval(()=>{
+    if(gotReal||i>=script.length){stopDemo();return;}
+    handle(script[i++]);
+  },1100);
+}
+function stopDemo(){if(demoTimer){clearInterval(demoTimer);demoTimer=null;}}
+
+connect();
+</script>
+</body>
+</html>
