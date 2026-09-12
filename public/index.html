@@ -219,15 +219,16 @@ function renderSummary(){
   if(!players.length){summaryEl.innerHTML="<span>Партия ещё не началась</span>";return;}
   const alive=players.filter(p=>p.alive);
   const c=r=>alive.filter(p=>p.role===r).length;
-  const flag=(lbl,r)=> c(r)>0
-    ? `<span class="ok">${lbl} ✓</span>`
-    : `<span class="no">${lbl}</span>`;
-  summaryEl.innerHTML=
-    `<span>Живых: <b>${alive.length}</b></span><span class="sep">·</span>`+
-    `<span>Мафия: <b>${c('mafia')}</b></span><span class="sep">·</span>`+
-    `<span>Маньяк: <b>${c('maniac')}</b></span><span class="sep">·</span>`+
-    `🔍 ${flag('Комиссар','komissar')}<span class="sep">·</span>`+
-    `🩺 ${flag('Доктор','doctor')}`;
+  // роли-числа: показываем количество живых. Новую роль (путана, бомж…) добавить сюда — одной строкой.
+  const counts=[["Мафия","mafia"],["Маньяк","maniac"]];
+  // роли-одиночки: показываем ✓ (кто-то жив) / ✗ (выбыл).
+  const flags=[["🔍 Комиссар","komissar"],["🩺 Доктор","doctor"]];
+  const parts=[`<span>Живых: <b>${alive.length}</b></span>`];
+  counts.forEach(([lbl,r])=>parts.push(`<span>${lbl}: <b>${c(r)}</b></span>`));
+  flags.forEach(([lbl,r])=>parts.push(
+    c(r)>0 ? `<span class="ok">${lbl} ✓</span>` : `<span class="no">${lbl} ✗</span>`));
+  parts.push(`<span>Мирные: <b>${c("civilian")}</b></span>`);   // ← в конце строки
+  summaryEl.innerHTML=parts.join('<span class="sep">·</span>');
 }
 
 function atBottom(){return feed.scrollHeight-feed.scrollTop-feed.clientHeight<60;}
