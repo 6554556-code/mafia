@@ -138,6 +138,25 @@
   .conn.live{color:var(--good)}
   .conn.demo{color:#a6791f}
 
+  .chip.you{color:#2a6aa0}
+  .chip.you b{color:#b5352c;font-weight:700}
+
+  /* ── панель хода игрока (появляется, когда твой ход) ── */
+  .inputbar{display:none;padding:8px;flex-direction:column;gap:6px}
+  .inputbar.on{display:flex;animation:pop .2s ease-out}
+  .inputbar .lbl{font-size:12px;color:var(--ink-soft);font-weight:600}
+  .inputrow{display:flex;gap:6px}
+  .inputrow input{
+    flex:1;min-width:0;font-family:inherit;font-size:14px;
+    padding:9px 11px;border:2px solid var(--line);background:#fff;color:var(--ink);
+  }
+  .inputrow input:focus{outline:none;box-shadow:inset 0 0 0 2px var(--think-br)}
+  .btn{font-family:"Pixelify Sans",monospace;font-weight:700;font-size:14px;
+    padding:9px 16px;border:2px solid var(--line);cursor:pointer;white-space:nowrap}
+  .btn.say{background:#f3d24e;color:#3a2e00}
+  .btn.skip{background:var(--paper-2);color:#3d3d3d}
+  .btn:active{transform:translateY(1px)}
+
   .feed::-webkit-scrollbar{width:12px}
   .feed::-webkit-scrollbar-thumb{background:var(--paper-2);border:2px solid var(--line)}
 </style>
@@ -149,6 +168,7 @@
     <div class="panel topbar">
       <div class="title pixel">МАФИЯ</div>
       <div class="chip day pixel"><span>☀</span><span id="dayLabel">День 1</span></div>
+      <div class="chip you pixel" id="youChip" style="display:none">Вы: <b id="youRole"></b></div>
       <div class="chip mode pixel"><span class="eye">👁</span><span>Глаз бога</span></div>
     </div>
 
@@ -162,6 +182,15 @@
 
     <div class="panel feedWrap">
       <div class="feed" id="feed"></div>
+    </div>
+
+    <div class="panel inputbar" id="inputbar">
+      <div class="lbl" id="inputLbl">Ваша реплика</div>
+      <div class="inputrow">
+        <input id="sayText" type="text" placeholder="Скажите что-нибудь…" autocomplete="off">
+        <button class="btn say" id="btnSay">Сказать</button>
+        <button class="btn skip" id="btnSkip">Молчать</button>
+      </div>
     </div>
 
   </div>
@@ -193,9 +222,31 @@ const seatsEl=document.getElementById('seats');
 const summaryEl=document.getElementById('summary');
 const dayLabel=document.getElementById('dayLabel');
 const connEl=document.getElementById('conn');
+const inputbar=document.getElementById('inputbar');
+const sayText=document.getElementById('sayText');
+const inputLbl=document.getElementById('inputLbl');
+const youChip=document.getElementById('youChip');
+const youRoleEl=document.getElementById('youRole');
 
 let players=[];            // [{name,c,role,alive}]
+let myName=null;           // имя человека за столом
 const roleRu={mafia:"Мафия",maniac:"Маньяк",komissar:"Комиссар",doctor:"Доктор",civilian:"Мирный"};
+
+// ── отправка действия человека серверу (обратный канал) ──
+async function sendAction(body){
+  try{ await fetch('/action',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}); }
+  catch(_){ /* демо-режим без сервера — глотаем */ }
+}
+function showInput(kind){
+  if(kind==="say"){ inputLbl.textContent="Ваша реплика"; inputbar.classList.add('on'); sayText.value=""; sayText.focus(); }
+}
+function hideInput(){ inputbar.classList.remove('on'); }
+function submitSay(){ if(!inputbar.classList.contains('on'))return; const t=sayText.value.trim(); hideInput(); sendAction({text:t, silent:!t}); }
+function submitSkip(){ if(!inputbar.classList.contains('on'))return; hideInput(); sendAction({silent:true}); }
+
+document.getElementById('btnSay').onclick=submitSay;
+document.getElementById('btnSkip').onclick=submitSkip;
+sayText.addEventListener('keydown',(e)=>{ if(e.key==="Enter")submitSay(); });
 
 function render(){
   seatsEl.innerHTML="";
@@ -242,7 +293,13 @@ const esc=s=>String(s).replace(/[&<>]/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[
 function handle(e){
   switch(e.type){
     case "reset":
-      players=[];feed.innerHTML="";render();dayLabel.textContent="День 1";break;
+      players=[];feed.innerHTML="";render();dayLabel.textContent="День 1";hideInput();break;
+    case "you":
+      myName=e.name; youRoleEl.textContent=roleRu[e.role]||e.role; youChip.style.display="";break;
+    case "your_turn":
+      showInput(e.kind);break;
+    case "your_turn_done":
+      hideInput();break;
     case "roster":
       players=e.players.map(p=>({name:p.name,c:p.c,role:p.role,alive:p.alive!==false}));
       if(e.day)dayLabel.textContent="День "+e.day;
