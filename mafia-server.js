@@ -10,6 +10,8 @@ require("dotenv").config({ path: require("path").join(require("os").homedir(), "
 // ── НАСТРОЙКИ (меняй тут) ───────────────────────────────────────────────
 const PROVIDER = process.env.PROVIDER || "groq"; // groq | deepseek | grok | mock
 const SHOW_SECRETS = true;   // печатать роли, тайные мысли и личку (режим наблюдателя)
+const HUMAN = process.env.HUMAN === "1" || process.env.HUMAN === "true"; // за столом сидит человек
+const HUMAN_ROLE = process.env.HUMAN_ROLE || null;   // какую роль дать человеку (komissar/doctor/mafia/…); пусто = случайная
 const PACING_MS = Number(process.env.PACING_MS ?? 10000);         // пауза между ходами в мс (0 = максимально быстро)
 const TEMPERATURE = 0.9;     // «живость» речи
 const MAX_TOKENS = 400;
@@ -50,9 +52,26 @@ function broadcast(ev) {
   clients.forEach((res) => res.write(data));
 }
 
+// ── обратный канал: браузер → сервер ──────────────────────────────────
+let pending = null;   // текущий ожидаемый ход человека: { kind, resolve }
+// поставить игру на паузу и ждать ответа человека из браузера
+function awaitHuman(kind, payload = {}) {
+  return new Promise((resolve) => {
+    pending = { kind, resolve };
+    broadcast({ type: "your_turn", kind, ...payload });
+  });
+}
+
 function startWeb(onFirstViewer) {
   const app = express();
+  app.use(express.json());
   app.use(express.static(require("path").join(__dirname, "public")));
+
+  // приёмник действий человека (реплика, голос, ночной ход)
+  app.post("/action", (req, res) => {
+    if (pending) { const p = pending; pending = null; broadcast({ type: "your_turn_done" }); p.resolve(req.body || {}); }
+    res.json({ ok: true });
+  });
 
   app.get("/events", (req, res) => {
     res.writeHead(200, { "Content-Type": "text/event-stream", "Cache-Control": "no-cache", Connection: "keep-alive" });
@@ -306,6 +325,12 @@ async function doDiscussion() {
   for (let round = 1; round <= 2; round++) {
     narrator(`— круг обсуждения ${round}/2 —`);
     for (const p of shuffle(living())) {
+      if (p.human) {
+        const ans = await awaitHuman("say", { name: p.name, round });
+        const msg = (ans.text || "").trim();
+        if (!msg || ans.silent) silence(p); else say(p, msg);
+        continue;
+      }
       const plan = await aiPlan(p, round);
       secretThought(p.name, plan);
       const msg = await aiSpeak(p, round, plan);
@@ -367,8 +392,16 @@ async function gameLoop() {
   const roles = shuffle(["mafia", "mafia", "maniac", "komissar", "doctor", "civilian", "civilian", "civilian"]);
   G.players.forEach((p, i) => (p.role = roles[i]));
 
+  // сажаем человека за стол: одно кресло становится твоим
+  let humanP = null;
+  if (HUMAN) {
+    humanP = HUMAN_ROLE ? G.players.find((p) => p.role === HUMAN_ROLE) : G.players[(Math.random() * G.players.length) | 0];
+    if (humanP) humanP.human = true;
+  }
+
   broadcast({ type: "reset" });
   broadcast({ type: "roster", day: G.day, players: G.players.map((p) => ({ name: p.name, c: p.c, role: p.role, alive: true })) });
+  if (humanP) broadcast({ type: "you", name: humanP.name, role: humanP.role });
 
   console.log(BOLD(`\n════ МАФИЯ · провайдер: ${PROVIDER} · модель: ${PROVIDERS[PROVIDER].model} ════`));
   if (SHOW_SECRETS) {
