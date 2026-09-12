@@ -35,8 +35,8 @@
     -webkit-font-smoothing:none;
   }
   .machine{
-    width:100%;max-width:680px;display:flex;flex-direction:column;gap:10px;
-    height:calc(100vh - 28px);
+    width:100%;max-width:680px;display:flex;flex-direction:column;gap:6px;
+    height:calc(100vh - 20px);
   }
   .pixel{font-family:"Pixelify Sans",ui-monospace,monospace;}
 
@@ -48,7 +48,7 @@
   }
 
   /* ── верхняя панель ─────────────────────────── */
-  .topbar{display:flex;align-items:stretch;gap:8px;padding:8px}
+  .topbar{display:flex;align-items:stretch;gap:8px;padding:6px}
   .title{
     display:flex;align-items:center;padding:6px 14px;
     background:var(--paper-2);border:2px solid var(--line);
@@ -63,47 +63,44 @@
   .chip.mode{margin-left:auto;color:#3d3d3d}
   .chip .eye{font-size:15px}
 
-  /* ── ряд участников ─────────────────────────── */
-  .seatsWrap{padding:8px}
-  .seats{display:flex;gap:6px;overflow-x:auto;padding-bottom:2px}
-  .seat{
-    flex:0 0 auto;width:88px;text-align:center;
-    background:var(--paper-2);border:2px solid var(--line);
-    padding:7px 5px 6px;position:relative;
-  }
+  /* ── ряд участников: сетка до 8 в ряд, дальше 2-й ряд (без скрола) ── */
+  .seatsWrap{padding:5px}
+  .seats{display:grid;grid-template-columns:repeat(8,1fr);gap:3px}
+  .seat{text-align:center;position:relative;min-width:0}
   .ava{
-    width:60px;height:60px;margin:0 auto 5px;
+    width:100%;aspect-ratio:5/4;margin:0 auto;position:relative;
     display:flex;align-items:center;justify-content:center;
-    border:2px solid var(--line);
-    font-size:30px;font-weight:700;color:#1c1c1c;
+    font-size:26px;font-weight:700;color:#1c1c1c;
   }
-  .seat .nm{font-size:12px;line-height:1.1;height:24px;overflow:hidden;font-weight:700}
-  .seat .role{font-size:11px;margin-top:2px;letter-spacing:.3px;font-weight:700}
-  .bar{height:6px;margin-top:4px;border:1px solid var(--line);background:#cfcabc}
+  .seat .nm{font-size:13px;line-height:1.1;margin-top:4px;font-weight:700;
+    white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .seat .role{font-size:11px;line-height:1.1;margin-top:1px;font-weight:700;
+    white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .bar{height:5px;margin-top:3px;border:1px solid var(--line);background:#cfcabc}
   .bar > i{display:block;height:100%;background:var(--good);width:100%}
-  .seat.dead{opacity:.55;filter:grayscale(.7)}
+  .seat.dead{opacity:.5;filter:grayscale(.85)}
   .seat.dead .bar > i{width:0}
   .seat.dead .ava::after{
-    content:"✕";position:absolute;color:#b5352c;font-size:30px;font-weight:700;
-    left:0;right:0;top:6px;text-align:center;
+    content:"✕";position:absolute;color:#b5352c;font-size:26px;font-weight:700;
+    left:0;right:0;top:50%;transform:translateY(-50%);text-align:center;
   }
-  .ava{position:relative}
 
   /* ── строка-сводка сил ──────────────────────── */
   .summary{
-    padding:9px 12px;font-size:13px;font-weight:600;
-    display:flex;flex-wrap:wrap;gap:4px 14px;align-items:center;
+    padding:6px 10px;font-size:13px;font-weight:600;
+    display:flex;flex-wrap:wrap;gap:3px 12px;align-items:center;
     background:var(--paper-2);
   }
   .summary .sep{color:#9a968a}
   .summary .ok{color:var(--good)}
+  .summary .bad{color:#b5352c}
   .summary .no{color:#b5352c;text-decoration:line-through}
 
   /* ── лента событий ──────────────────────────── */
-  .feedWrap{flex:1;min-height:0;padding:8px;display:flex}
+  .feedWrap{flex:1;min-height:0;padding:6px;display:flex}
   .feed{
-    flex:1;overflow-y:auto;padding:4px 10px 4px 4px;
-    display:flex;flex-direction:column;gap:9px;
+    flex:1;overflow-y:auto;padding:2px 8px 2px 4px;
+    display:flex;flex-direction:column;gap:7px;
   }
   .ev{animation:pop .22s ease-out}
   @keyframes pop{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:none}}
@@ -219,15 +216,15 @@ function renderSummary(){
   if(!players.length){summaryEl.innerHTML="<span>Партия ещё не началась</span>";return;}
   const alive=players.filter(p=>p.alive);
   const c=r=>alive.filter(p=>p.role===r).length;
-  // роли-числа: показываем количество живых. Новую роль (путана, бомж…) добавить сюда — одной строкой.
-  const counts=[["Мафия","mafia"],["Маньяк","maniac"]];
+  // роли-числа: мафия/маньяк — красным (враги), считаем живых. Новую роль добавить сюда одной строкой.
+  const counts=[["Мафия","mafia","bad"],["Маньяк","maniac","bad"]];
   // роли-одиночки: показываем ✓ (кто-то жив) / ✗ (выбыл).
   const flags=[["🔍 Комиссар","komissar"],["🩺 Доктор","doctor"]];
   const parts=[`<span>Живых: <b>${alive.length}</b></span>`];
-  counts.forEach(([lbl,r])=>parts.push(`<span>${lbl}: <b>${c(r)}</b></span>`));
+  counts.forEach(([lbl,r,cls])=>parts.push(`<span class="${cls}">${lbl}: <b>${c(r)}</b></span>`));
   flags.forEach(([lbl,r])=>parts.push(
     c(r)>0 ? `<span class="ok">${lbl} ✓</span>` : `<span class="no">${lbl} ✗</span>`));
-  parts.push(`<span>Мирные: <b>${c("civilian")}</b></span>`);   // ← в конце строки
+  parts.push(`<span class="ok">Мирные: <b>${c("civilian")}</b></span>`);   // мирные — зелёным, в конце
   summaryEl.innerHTML=parts.join('<span class="sep">·</span>');
 }
 
