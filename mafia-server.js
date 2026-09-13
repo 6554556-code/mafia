@@ -302,11 +302,29 @@ async function doNight() {
   let checkName = null;
   if (kom) {
     const checkPool = alive.filter((p) => p !== kom && !G.priv[kom.name].checks.some((c) => c.name === p.name));
-    if (checkPool.length) { checkName = await aiNight(kom, "check", checkPool); const tp = byName(checkName); G.priv[kom.name].checks.push({ name: tp.name, role: tp.role }); secretAct(`🔍 комиссар (${kom.name}) проверяет: ${checkName} → ${roleName(tp.role)}`); }
-    else secretAct(`… комиссар (${kom.name}) уже проверил всех живых`);
+    if (checkPool.length) {
+      const poolNames = checkPool.map((p) => p.name);
+      if (kom.human) { const ans = await awaitHuman("check", { candidates: poolNames }); checkName = poolNames.includes(ans.target) ? ans.target : poolNames[(Math.random() * poolNames.length) | 0]; }
+      else checkName = await aiNight(kom, "check", checkPool);
+      const tp = byName(checkName); G.priv[kom.name].checks.push({ name: tp.name, role: tp.role });
+      secretAct(`🔍 комиссар (${kom.name}) проверяет: ${checkName} → ${roleName(tp.role)}`);
+      if (kom.human) broadcast({ type: "check_result", name: tp.name, role: tp.role });
+    } else { secretAct(`… комиссар (${kom.name}) уже проверил всех живых`); if (kom.human) broadcast({ type: "note", text: "Ты уже проверил всех живых игроков." }); }
   }
 
-  if (kom) { const dec = await aiKomWhisper(kom, alive.filter((p) => p !== kom)); if (dec.to) { const rec = byName(dec.to); postPM("whisper", kom, [kom, rec], dec.text); const rep = await aiWhisperReply(rec, kom.name, dec.text); postPM("whisper", rec, [kom, rec], rep); } else secretAct(`… комиссар (${kom.name}) решил пока не шептаться`); }
+  if (kom) {
+    if (kom.human) {
+      const others = alive.filter((p) => p !== kom);
+      const ans = await awaitHuman("whisper", { candidates: others.map((p) => p.name) });
+      if (ans && ans.to && !ans.skip) {
+        const rec = byName(ans.to);
+        if (rec && rec.alive) { const text = (ans.text || "").toString().slice(0, 200) || "Давай объединимся."; postPM("whisper", kom, [kom, rec], text); const rep = await aiWhisperReply(rec, kom.name, text); postPM("whisper", rec, [kom, rec], rep); }
+      } else secretAct("… ты решил не шептаться этой ночью");
+    } else {
+      const dec = await aiKomWhisper(kom, alive.filter((p) => p !== kom));
+      if (dec.to) { const rec = byName(dec.to); postPM("whisper", kom, [kom, rec], dec.text); const rep = await aiWhisperReply(rec, kom.name, dec.text); postPM("whisper", rec, [kom, rec], rep); } else secretAct(`… комиссар (${kom.name}) решил пока не шептаться`);
+    }
+  }
 
   if (doctor && ds && ds !== doctor.name) { const rec = byName(ds); if (rec && rec.alive) { const dec = await aiDoctorWhisper(doctor, rec); if (dec.to) { postPM("whisper", doctor, [doctor, rec], dec.text); const rep = await aiWhisperReply(rec, doctor.name, dec.text); postPM("whisper", rec, [doctor, rec], rep); } else secretAct(`… доктор (${doctor.name}) решил не раскрываться спасённому`); } }
 
