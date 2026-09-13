@@ -351,10 +351,19 @@ async function doVote() {
   const alive = living();
   const tally = {};
   for (const p of alive) {
-    const r = await aiVote(p);
+    let r;
+    if (p.human) {
+      const cands = alive.map((x) => x.name).filter((n) => n !== p.name);
+      const ans = await awaitHuman("vote", { candidates: cands });
+      let target = ans.target;
+      if (!cands.includes(target)) target = cands[(Math.random() * cands.length) | 0]; // подстраховка
+      r = { target, reason: (ans.reason || "").toString().slice(0, 80) };
+    } else {
+      r = await aiVote(p);
+    }
     vote(p.name, r.target, r.reason);
     tally[r.target] = (tally[r.target] || 0) + 1;
-    await sleep(PACING_MS);
+    if (!p.human) await sleep(PACING_MS);
   }
   const max = Math.max(...Object.values(tally));
   const lynched = byName(shuffle(Object.keys(tally).filter((n) => tally[n] === max))[0]);
