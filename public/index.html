@@ -62,6 +62,13 @@
   .chip.day{color:#a6791f}
   .chip.mode{margin-left:auto;color:#3d3d3d}
   .chip .eye{font-size:15px}
+  /* ── Глаз бога: выключатель секретов ─────────── */
+  .chip.mode{cursor:pointer;user-select:none;opacity:.55;transition:opacity .15s}
+  .chip.mode.on{opacity:1;color:#b5352c}
+  .chip.mode.on .eye{filter:drop-shadow(0 0 2px #b5352c88)}
+  body.blind .plaque.secret,
+  body.blind div.act.secret{display:none}
+  body.blind .role.secret{visibility:hidden}
 
   /* ── ряд участников: сетка до 8 в ряд, дальше 2-й ряд (без скрола) ── */
   .seatsWrap{padding:5px}
@@ -184,7 +191,7 @@
   .feed::-webkit-scrollbar-thumb{background:var(--paper-2);border:2px solid var(--line)}
 </style>
 </head>
-<body>
+<body class="blind">
   <div class="conn" id="conn">подключение…</div>
   <div class="machine">
 
@@ -192,7 +199,7 @@
       <div class="title pixel">МАФИЯ</div>
       <div class="chip day pixel"><span>☀</span><span id="dayLabel">День 1</span></div>
       <div class="chip you pixel" id="youChip" style="display:none">Вы: <b id="youRole"></b></div>
-      <div class="chip mode pixel"><span class="eye">👁</span><span>Глаз бога</span></div>
+      <div class="chip mode pixel" id="eyeBtn" onclick="document.body.classList.toggle('blind');this.classList.toggle('on')"><span class="eye">👁</span><span>Глаз бога</span></div>
     </div>
 
     <div class="panel seatsWrap">
@@ -336,7 +343,7 @@ function render(){
     seat.innerHTML=`
       <div class="ava">${(p.name||'?')[0]}${p.av?`<img src="avatars/${p.av}" alt="" onerror="this.remove()">`:''}</div>
       <div class="nm" style="color:${deep(p.c)}">${p.name}</div>
-      <div class="role" style="color:${deep(p.c)}">${roleRu[p.role]||''}</div>
+      <div class="role${p.alive&&p.name!==myName?' secret':''}" style="color:${deep(p.c)}">${roleRu[p.role]||''}</div>
       <div class="bar"><i></i></div>`;
     seatsEl.appendChild(seat);
   });
@@ -366,7 +373,7 @@ function add(node){
   feed.appendChild(node);
   if(stick) feed.scrollTop=feed.scrollHeight;
 }
-function el(cls,html){const d=document.createElement('div');d.className=cls;d.innerHTML=html;return d;}
+function el(cls,html){const d=document.createElement('div');d.className=cls;if(/\b(think|mafia|whisper|act)\b/.test(cls))d.className+=" secret";d.innerHTML=html;return d;}
 const esc=s=>String(s).replace(/[&<>]/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[m]));
 
 // ── обработка событий от сервера ────────────────────────────────────────────
