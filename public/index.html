@@ -68,10 +68,12 @@
   .seats{display:grid;grid-template-columns:repeat(8,1fr);gap:3px}
   .seat{text-align:center;position:relative;min-width:0}
   .ava{
-    width:100%;aspect-ratio:5/4;margin:0 auto;position:relative;
+    width:100%;aspect-ratio:5/4;margin:0 auto;position:relative;overflow:hidden;
     display:flex;align-items:center;justify-content:center;
     font-size:26px;font-weight:700;color:#1c1c1c;
+    background:#cfcabc;border:1px solid var(--line);
   }
+  .ava img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;image-rendering:pixelated}
   .seat .nm{font-size:13px;line-height:1.1;margin-top:4px;font-weight:700;
     white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
   .seat .role{font-size:11px;line-height:1.1;margin-top:1px;font-weight:700;
@@ -332,7 +334,7 @@ function render(){
     const seat=document.createElement('div');
     seat.className="seat"+(p.alive?"":" dead");
     seat.innerHTML=`
-      <div class="ava" style="background:${fill(p.c)};border-color:${line(p.c)}">${(p.name||'?')[0]}</div>
+      <div class="ava">${(p.name||'?')[0]}${p.av?`<img src="avatars/${p.av}" alt="" onerror="this.remove()">`:''}</div>
       <div class="nm" style="color:${deep(p.c)}">${p.name}</div>
       <div class="role" style="color:${deep(p.c)}">${roleRu[p.role]||''}</div>
       <div class="bar"><i></i></div>`;
@@ -383,7 +385,7 @@ function handle(e){
     case "note":
       add(el("narr",esc(e.text)));break;
     case "roster":
-      players=e.players.map(p=>({name:p.name,c:p.c,role:p.role,alive:p.alive!==false}));
+    players=e.players.map(p=>({name:p.name,c:p.c,av:p.av,role:p.role,alive:p.alive!==false}));
       if(e.day)dayLabel.textContent="День "+e.day;
       render();break;
     case "day":
