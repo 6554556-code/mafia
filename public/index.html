@@ -162,6 +162,13 @@
     padding:8px 11px;border:2px solid var(--line);background:#fff;color:var(--ink);
   }
   #voteMode #voteReason:focus{outline:none;box-shadow:inset 0 0 0 2px var(--think-br)}
+  #whisperMode #whisperText{
+    width:100%;font-family:inherit;font-size:14px;margin-bottom:6px;
+    padding:8px 11px;border:2px solid var(--line);background:#fff;color:var(--ink);
+  }
+  #whisperMode #whisperText:focus{outline:none;box-shadow:inset 0 0 0 2px var(--whisp-br)}
+  .plaque.check{background:#e5eecf;border-color:#a9c47e;color:#3c5417}
+  .plaque.check .who{color:#4a6b1e}
   .votebtns{display:flex;flex-wrap:wrap;gap:5px}
   .votebtn{
     font-family:inherit;font-size:13px;font-weight:700;cursor:pointer;
@@ -208,6 +215,11 @@
         <input id="voteReason" type="text" placeholder="Причина (по желанию)…" autocomplete="off">
         <div class="votebtns" id="voteBtns"></div>
       </div>
+      <div id="whisperMode" style="display:none">
+        <input id="whisperText" type="text" placeholder="Что шепнуть (по желанию)…" autocomplete="off">
+        <div class="votebtns" id="whisperBtns"></div>
+        <button class="btn skip" id="btnNoWhisper" style="margin-top:6px">Не шептаться</button>
+      </div>
     </div>
 
   </div>
@@ -246,6 +258,9 @@ const sayMode=document.getElementById('sayMode');
 const voteMode=document.getElementById('voteMode');
 const voteBtns=document.getElementById('voteBtns');
 const voteReason=document.getElementById('voteReason');
+const whisperMode=document.getElementById('whisperMode');
+const whisperBtns=document.getElementById('whisperBtns');
+const whisperText=document.getElementById('whisperText');
 const youChip=document.getElementById('youChip');
 const youRoleEl=document.getElementById('youRole');
 
@@ -259,23 +274,39 @@ async function sendAction(body){
   try{ await fetch('/action',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}); }
   catch(_){ /* демо-режим без сервера — глотаем */ }
 }
+function nameButtons(container, cands, onPick){
+  container.innerHTML="";
+  (cands||[]).forEach(name=>{
+    const b=document.createElement('button');
+    b.className="votebtn"; b.textContent=name;
+    b.style.color=colorOf(name); b.style.borderColor=colorOf(name);
+    b.onclick=()=>onPick(name);
+    container.appendChild(b);
+  });
+}
 function showInput(e){
   const kind=e.kind;
+  sayMode.style.display="none"; voteMode.style.display="none"; whisperMode.style.display="none";
   if(kind==="say"){
     inputLbl.textContent="Ваша реплика";
-    sayMode.style.display=""; voteMode.style.display="none";
-    inputbar.classList.add('on'); sayText.value=""; sayText.focus();
-  } else if(kind==="vote"){
-    inputLbl.textContent="Ваш голос — кого казнить?";
-    sayMode.style.display="none"; voteMode.style.display="";
+    sayMode.style.display=""; inputbar.classList.add('on'); sayText.value=""; sayText.focus();
+  } else if(kind==="vote" || kind==="check"){
+    inputLbl.textContent = kind==="vote" ? "Ваш голос — кого казнить?" : "Ночь. Кого проверить?";
+    voteMode.style.display="";
+    voteReason.style.display = kind==="vote" ? "" : "none";
     voteReason.value="";
-    voteBtns.innerHTML="";
-    (e.candidates||[]).forEach(name=>{
-      const b=document.createElement('button');
-      b.className="votebtn"; b.textContent=name;
-      b.style.color=colorOf(name); b.style.borderColor=colorOf(name);
-      b.onclick=()=>{ hideInput(); sendAction({target:name, reason:voteReason.value.trim()}); };
-      voteBtns.appendChild(b);
+    nameButtons(voteBtns, e.candidates, (name)=>{
+      hideInput();
+      if(kind==="vote") sendAction({target:name, reason:voteReason.value.trim()});
+      else sendAction({target:name});
+    });
+    inputbar.classList.add('on');
+  } else if(kind==="whisper"){
+    inputLbl.textContent="Шепнуть кому-то? (по желанию)";
+    whisperMode.style.display="";
+    whisperText.value="";
+    nameButtons(whisperBtns, e.candidates, (name)=>{
+      const t=whisperText.value.trim(); hideInput(); sendAction({to:name, text:t});
     });
     inputbar.classList.add('on');
   }
@@ -286,6 +317,7 @@ function submitSkip(){ if(!inputbar.classList.contains('on'))return; hideInput()
 
 document.getElementById('btnSay').onclick=submitSay;
 document.getElementById('btnSkip').onclick=submitSkip;
+document.getElementById('btnNoWhisper').onclick=()=>{ if(!inputbar.classList.contains('on'))return; hideInput(); sendAction({skip:true}); };
 sayText.addEventListener('keydown',(e)=>{ if(e.key==="Enter")submitSay(); });
 
 function render(){
@@ -340,6 +372,10 @@ function handle(e){
       showInput(e);break;
     case "your_turn_done":
       hideInput();break;
+    case "check_result":
+      add(el("plaque check",`<div class="who">🔍 Твоя проверка</div><div><b>${esc(e.name)}</b> — ${roleRu[e.role]||esc(e.role)}</div>`));break;
+    case "note":
+      add(el("narr",esc(e.text)));break;
     case "roster":
       players=e.players.map(p=>({name:p.name,c:p.c,role:p.role,alive:p.alive!==false}));
       if(e.day)dayLabel.textContent="День "+e.day;
