@@ -216,7 +216,10 @@ function tacticsBlock(p) {
 function pmBlock(p) { const n = G.priv[p.name].notes; return n.length ? `ЛИЧНЫЕ СООБЩЕНИЯ (видишь только ты):\n${n.join("\n")}` : ""; }
 function baseCtx(p) {
   const pm = pmBlock(p);
-  return `${RULES}\n\nТы — ${p.name}. ${p.persona} Стиль: ${p.style}.\nТвой игровой ТЕМПЕРАМЕНТ (влияет на твою стратегию, но не отменяет задачу роли): ${p.temp}\n\n${privateBlock(p)}\n\n${factsBlock()}\n\n${tacticsBlock(p)}\n\n${pm ? pm + "\n\n" : ""}Игроки:\n${publicRoster()}\n\nХод игры:\n${transcript() || "— пусто —"}`;
+  const calendar = G.day === 1
+    ? `\n\nКАЛЕНДАРЬ: сейчас ДЕНЬ 1 — самый первый. Прошлых дней и прошлых ГОЛОСОВАНИЙ не было вообще. НЕ ссылайся на «вчерашнее голосование», «прошлый день», «как голосовали вчера» — этого не существует. Зацепки бери только из этой ночи и из сегодняшних реплик.`
+    : `\n\nКАЛЕНДАРЬ: сейчас день ${G.day}. Прошлые дни и голосования уже были — можешь на них ссылаться (см. ход игры выше).`;
+  return `${RULES}\n\nТы — ${p.name}. ${p.persona} Стиль: ${p.style}.\nТвой игровой ТЕМПЕРАМЕНТ (влияет на твою стратегию, но не отменяет задачу роли): ${p.temp}\n\n${privateBlock(p)}\n\n${factsBlock()}${calendar}\n\n${tacticsBlock(p)}\n\n${pm ? pm + "\n\n" : ""}Игроки:\n${publicRoster()}\n\nХод игры:\n${transcript() || "— пусто —"}`;
 }
 
 // ── ИИ-действия ─────────────────────────────────────────────────────────
