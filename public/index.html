@@ -176,6 +176,7 @@
   }
   .votebtn:hover{background:#fff}
   .votebtn:active{transform:translateY(1px)}
+  .votebtn.off{opacity:.35;pointer-events:none}
 
   .feed::-webkit-scrollbar{width:12px}
   .feed::-webkit-scrollbar-thumb{background:var(--paper-2);border:2px solid var(--line)}
@@ -302,13 +303,18 @@ function showInput(e){
     });
     inputbar.classList.add('on');
   } else if(kind==="whisper"){
-    inputLbl.textContent="Шепнуть кому-то? (по желанию)";
+    inputLbl.textContent="Шепнуть кому-то? Напиши сообщение, потом выбери кому:";
     whisperMode.style.display="";
     whisperText.value="";
     nameButtons(whisperBtns, e.candidates, (name)=>{
-      const t=whisperText.value.trim(); hideInput(); sendAction({to:name, text:t});
+      const t=whisperText.value.trim();
+      if(!t){ whisperText.focus(); return; }   // без текста не шлём — никаких слов за тебя
+      hideInput(); sendAction({to:name, text:t});
     });
-    inputbar.classList.add('on');
+    const toggle=()=>{ const on=whisperText.value.trim().length>0;
+      whisperBtns.querySelectorAll('.votebtn').forEach(b=>b.classList.toggle('off',!on)); };
+    whisperText.oninput=toggle; toggle();
+    inputbar.classList.add('on'); whisperText.focus();
   }
 }
 function hideInput(){ inputbar.classList.remove('on'); }
