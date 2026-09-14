@@ -168,7 +168,7 @@ function result(text, red) { pub("result", { text, red }); }
 function say(p, text) { pub("say", { name: p.name, c: p.c, text }); }
 function silence(p) { pub("silence", { name: p.name }); }
 function vote(voter, target, reason) { pub("vote", { voter, target, reason }); }
-function secretPM(channel, from, text) { if (SHOW_SECRETS) { console.log(DIM(`   🔒 ${channel === "mafia" ? "мафия" : "шёпот"} · ${from}: ${text}`)); broadcast({ type: "pm", channel, from, text }); } }
+function secretPM(channel, from, text, to) { if (SHOW_SECRETS) { console.log(DIM(`   🔒 ${channel === "mafia" ? "мафия" : "шёпот"} · ${from}: ${text}`)); broadcast({ type: "pm", channel, from, text, to }); } }
 function secretThought(name, text) { if (SHOW_SECRETS) { const t = text.replace(/\n/g, " "); console.log(DIM(`   💭 ${name}: ${t}`)); broadcast({ type: "think", name, text: t }); } }
 function secretAct(text) { if (SHOW_SECRETS) { console.log(DIM(`   ${text}`)); broadcast({ type: "act", text }); } }
 
@@ -283,7 +283,7 @@ function warn(e) { if (!WARNED) { console.log(A(203, `⚠ Ошибка моде�
 function postPM(channel, from, parts, text) {
   const tag = channel === "mafia" ? `[ночь ${G.day}, чат мафии]` : `[шёпот, ночь ${G.day}]`;
   parts.forEach((x) => G.priv[x.name].notes.push(`${tag} ${from.name}: ${text}`));
-  secretPM(channel, from.name, text);
+  secretPM(channel, from.name, text, parts.map((x) => x.name));
 }
 
 // ── Фазы ────────────────────────────────────────────────────────────────
