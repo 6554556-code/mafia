@@ -69,6 +69,7 @@
   body.blind .plaque.secret,
   body.blind div.act.secret{display:none}
   body.blind .role.secret{visibility:hidden}
+  .seat.me .ava{box-shadow:0 0 0 2px #b5352c,0 0 0 4px #b5352c55}
 
   /* ── ряд участников: сетка до 8 в ряд, дальше 2-й ряд (без скрола) ── */
   .seatsWrap{padding:5px}
@@ -339,7 +340,7 @@ function render(){
   seatsEl.innerHTML="";
   players.forEach(p=>{
     const seat=document.createElement('div');
-    seat.className="seat"+(p.alive?"":" dead");
+    seat.className="seat"+(p.alive?"":" dead")+(p.name===myName?" me":"");
     seat.innerHTML=`
       <div class="ava">${(p.name||'?')[0]}${p.av?`<img src="avatars/${p.av}" alt="" onerror="this.remove()">`:''}</div>
       <div class="nm" style="color:${deep(p.c)}">${p.name}</div>
@@ -373,7 +374,7 @@ function add(node){
   feed.appendChild(node);
   if(stick) feed.scrollTop=feed.scrollHeight;
 }
-function el(cls,html){const d=document.createElement('div');d.className=cls;if(/\b(think|mafia|whisper|act)\b/.test(cls))d.className+=" secret";d.innerHTML=html;return d;}
+function el(cls,html){const d=document.createElement('div');d.className=cls;if(/\b(think|act)\b/.test(cls))d.className+=" secret";d.innerHTML=html;return d;}
 const esc=s=>String(s).replace(/[&<>]/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[m]));
 
 // ── обработка событий от сервера ────────────────────────────────────────────
@@ -382,7 +383,7 @@ function handle(e){
     case "reset":
       players=[];feed.innerHTML="";render();dayLabel.textContent="День 1";hideInput();break;
     case "you":
-      myName=e.name; youRoleEl.textContent=roleRu[e.role]||e.role; youChip.style.display="";break;
+    myName=e.name; youRoleEl.textContent=roleRu[e.role]||e.role; youChip.style.display="";render();break;
     case "your_turn":
       showInput(e);break;
     case "your_turn_done":
@@ -411,9 +412,10 @@ function handle(e){
     case "think":
       add(el("plaque think",
         `<div class="who">${esc(e.name)}</div><div>${esc(e.text)}</div>`));break;
-    case "pm":{
+        case "pm":{
       const mafia=e.channel==="mafia";
-      add(el("plaque "+(mafia?"mafia":"whisper"),
+      const mine=e.from===myName||(e.to&&e.to.includes(myName));
+      add(el("plaque "+(mafia?"mafia":"whisper")+(mine?"":" secret"),
         `<div class="who"><span class="tag">${mafia?"мафия":"шёпот"}</span>${esc(e.from)}</div>`+
         `<div>${esc(e.text)}</div>`));break;}
     case "act":
