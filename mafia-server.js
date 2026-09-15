@@ -40,6 +40,7 @@ const BOLD = (s) => `\x1b[1m${s}\x1b[0m`;
 
 // ── ВЕБ-СЕРВЕР: живая труба сервер → браузер (SSE) ──────────────────────
 const express = require("express");
+const auth = require("./auth");
 const PORT = process.env.PORT || 3000;
 let clients = [];        // открытые вкладки-наблюдатели
 let eventBuffer = [];    // вся партия целиком — чтобы обновлённая вкладка видела с начала
@@ -66,6 +67,29 @@ function startWeb(onFirstViewer) {
   const app = express();
   app.use(express.json());
   app.use(express.static(require("path").join(__dirname, "public")));
+
+  app.post("/register", (req, res) => {
+    const { email, password, name } = req.body || {};
+    const r = auth.register(email, password, name);
+    if (r.error) return res.status(400).json({ error: r.error });
+    res.cookie("sid", r.token, { httpOnly: true, sameSite: "lax", path: "/", maxAge: 30 * 24 * 3600 * 1000 });
+    res.json({ user: r.user });
+  });
+  app.post("/login", (req, res) => {
+    const { email, password } = req.body || {};
+    const r = auth.login(email, password);
+    if (r.error) return res.status(400).json({ error: r.error });
+    res.cookie("sid", r.token, { httpOnly: true, sameSite: "lax", path: "/", maxAge: 30 * 24 * 3600 * 1000 });
+    res.json({ user: r.user });
+  });
+  app.post("/logout", (req, res) => {
+    auth.logout(auth.tokenFromReq(req));
+    res.clearCookie("sid", { path: "/" });
+    res.json({ ok: true });
+  });
+  app.get("/me", (req, res) => {
+    res.json({ user: auth.userByToken(auth.tokenFromReq(req)) });
+  });
 
   // приёмник действий человека (реплика, голос, ночной ход)
   app.post("/action", (req, res) => {
