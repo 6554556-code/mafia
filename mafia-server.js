@@ -65,7 +65,7 @@ function awaitHuman(kind, payload = {}) {
 
 function startWeb(onFirstViewer) {
   const app = express();
-  app.  app.use(express.json());
+  app.use(express.json());
   app.get("/", (req, res) => {
     if (!auth.userByToken(auth.tokenFromReq(req))) return res.redirect("/auth.html");
     res.sendFile(require("path").join(__dirname, "public", "index.html"));
