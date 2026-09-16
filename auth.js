@@ -12,11 +12,12 @@ const db = new DatabaseSync(path.join(__dirname, "mafia.db"));
 // Таблицы: пользователи и их сессии. IF NOT EXISTS — безопасно при каждом старте.
 db.exec(`
   CREATE TABLE IF NOT EXISTS users (
-    id      INTEGER PRIMARY KEY AUTOINCREMENT,
-    email   TEXT UNIQUE NOT NULL,
-    pass    TEXT NOT NULL,
-    name    TEXT NOT NULL,
-    created INTEGER NOT NULL
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    email      TEXT UNIQUE NOT NULL,
+    pass       TEXT NOT NULL,
+    name       TEXT NOT NULL,
+    name_lower TEXT UNIQUE NOT NULL,
+    created    INTEGER NOT NULL
   );
   CREATE TABLE IF NOT EXISTS sessions (
     token   TEXT PRIMARY KEY,
@@ -44,6 +45,8 @@ function verifyPassword(password, stored) {
 // ── Нормализация и простая валидация ──
 function normEmail(e) { return String(e || "").trim().toLowerCase(); }
 function validEmail(e) { return /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(e); }
+// Игровой ник: 2–16 символов — буквы любого языка, цифры, пробел, дефис, подчёркивание.
+function validName(n) { return /^[\p{L}\p{N} _-]{2,16}$/u.test(n); }
 
 // ── Регистрация: заводит пользователя и сразу открывает сессию ──
 function register(email, password, name) {
@@ -52,14 +55,17 @@ function register(email, password, name) {
   password = String(password || "");
   if (!validEmail(email)) return { error: "Некорректная почта" };
   if (password.length < 6)  return { error: "Пароль минимум 6 символов" };
-  if (name.length < 2)      return { error: "Имя минимум 2 символа" };
+  if (!validName(name))     return { error: "Ник: 2–16 символов — буквы, цифры, пробел, дефис или подчёркивание" };
 
   const exists = db.prepare("SELECT id FROM users WHERE email = ?").get(email);
   if (exists) return { error: "Такая почта уже зарегистрирована" };
+  const nameLower = name.toLowerCase();
+  const nameTaken = db.prepare("SELECT id FROM users WHERE name_lower = ?").get(nameLower);
+  if (nameTaken) return { error: "Этот ник уже занят" };
 
   const info = db.prepare(
-    "INSERT INTO users (email, pass, name, created) VALUES (?, ?, ?, ?)"
-  ).run(email, hashPassword(password), name, Date.now());
+    "INSERT INTO users (email, pass, name, name_lower, created) VALUES (?, ?, ?, ?, ?)"
+  ).run(email, hashPassword(password), name, nameLower, Date.now());
 
   return startSession(info.lastInsertRowid);
 }
