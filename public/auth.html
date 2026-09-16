@@ -70,7 +70,6 @@
   <div class="card">
     <div class="brand pixel">
       <div class="t">🕵 МАФИЯ</div>
-      <div class="s">вход за стол</div>
     </div>
 
     <div class="tabs pixel">
@@ -92,13 +91,12 @@
     <button class="btn pixel" id="submit">ВОЙТИ</button>
 
     <div class="msg" id="msg"></div>
-    <div class="hint pixel" id="hint">Ник будет твоим именем за столом.</div>
   </div>
 
 <script>
   let mode = "login"; // "login" | "register"
   const $ = (id) => document.getElementById(id);
-  const nameRow = $("nameRow"), msg = $("msg"), btn = $("submit"), hint = $("hint");
+  const nameRow = $("nameRow"), msg = $("msg"), btn = $("submit");
 
   function setMode(m){
     mode = m;
