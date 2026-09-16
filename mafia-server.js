@@ -70,7 +70,6 @@ function startWeb(onFirstViewer) {
     if (!auth.userByToken(auth.tokenFromReq(req))) return res.redirect("/auth.html");
     res.sendFile(require("path").join(__dirname, "public", "index.html"));
   });
-  app.use(express.static(require("path").join(__dirname, "public")));use(express.json());
   app.use(express.static(require("path").join(__dirname, "public")));
 
   app.post("/register", (req, res) => {
