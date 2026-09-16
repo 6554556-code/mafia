@@ -65,7 +65,13 @@ function awaitHuman(kind, payload = {}) {
 
 function startWeb(onFirstViewer) {
   const app = express();
-  app.use(express.json());
+  app.  app.use(express.json());
+  app.get("/", (req, res) => {
+    if (!auth.userByToken(auth.tokenFromReq(req))) return res.redirect("/auth.html");
+    res.sendFile(require("path").join(__dirname, "public", "index.html"));
+  });
+  app.use(express.static(require("path").join(__dirname, "public")));
+  use(express.json());
   app.use(express.static(require("path").join(__dirname, "public")));
 
   app.post("/register", (req, res) => {
@@ -103,7 +109,7 @@ function startWeb(onFirstViewer) {
     eventBuffer.forEach((ev) => res.write(`data: ${JSON.stringify(ev)}\n\n`)); // проигрываем уже случившееся
     clients.push(res);
     req.on("close", () => { clients = clients.filter((c) => c !== res); });
-    if (!gameStarted) { gameStarted = true; onFirstViewer(); } // первый зритель запускает партию
+    if (!gameStarted && auth.userByToken(auth.tokenFromReq(req))) { gameStarted = true; onFirstViewer(); } // первый вошедший зритель запускает партию
   });
 
   app.listen(PORT, () => {
