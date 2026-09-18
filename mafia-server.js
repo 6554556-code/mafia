@@ -107,7 +107,8 @@ function startWeb(onFirstViewer) {
     eventBuffer.forEach((ev) => res.write(`data: ${JSON.stringify(ev)}\n\n`)); // проигрываем уже случившееся
     clients.push(res);
     req.on("close", () => { clients = clients.filter((c) => c !== res); });
-    if (!gameStarted && auth.userByToken(auth.tokenFromReq(req))) { gameStarted = true; onFirstViewer(); } // первый вошедший зритель запускает партию
+    const me = auth.userByToken(auth.tokenFromReq(req));
+    if (!gameStarted && me) { gameStarted = true; onFirstViewer(me.name); } // первый вошедший запускает партию под своим ником
   });
 
   app.listen(PORT, () => {
@@ -467,7 +468,7 @@ function printCost() {
   console.log(`Оценка стоимости партии: ${cost < 0.01 ? "< $0.01" : "$" + cost.toFixed(3)} ${PROVIDER === "mock" ? "(mock — без сети)" : "(по прикидочным ценам, без учёта кэша)"}`);
 }
 
-async function gameLoop() {
+async function gameLoop(humanName) {
   const chars = shuffle(POOL).slice(0, 8);
   G = { players: chars.map((c) => ({ ...c, alive: true, revealed: null })), priv: {}, day: 1, log: [],     lastDead: [], lastOut: null, winner: null };
   G.players.forEach((p) => (G.priv[p.name] = { checks: [], kills: [], saves: [], notes: [] }));
@@ -478,7 +479,15 @@ async function gameLoop() {
   let humanP = null;
   if (HUMAN) {
     humanP = HUMAN_ROLE ? G.players.find((p) => p.role === HUMAN_ROLE) : G.players[(Math.random() * G.players.length) | 0];
-    if (humanP) humanP.human = true;
+    if (humanP) {
+      humanP.human = true;
+      if (humanName) {                 // переименовываем кресло в ник вошедшего, переносим его «память»
+        const old = humanP.name;
+        humanP.name = humanName;
+        G.priv[humanName] = G.priv[old];
+        delete G.priv[old];
+      }
+    }
   }
 
   broadcast({ type: "reset" });
@@ -506,8 +515,8 @@ async function gameLoop() {
 }
 
 // Поднимаем веб-сервер; партия стартует, как только откроется первая вкладка.
-startWeb(() => {
-  gameLoop().catch((e) => {
+startWeb((humanName) => {
+  gameLoop(humanName).catch((e) => {
     console.error("ФАТАЛЬНО:", e);
     broadcast({ type: "result", text: "Ошибка сервера: " + e.message, red: true });
   });
