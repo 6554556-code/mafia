@@ -42,28 +42,35 @@ const BOLD = (s) => `\x1b[1m${s}\x1b[0m`;
 const express = require("express");
 const auth = require("./auth");
 const PORT = process.env.PORT || 3000;
-let clients = [];        // открытые вкладки-наблюдатели
-let eventBuffer = [];    // вся партия целиком — чтобы обновлённая вкладка видела с начала
-let gameStarted = false;
+// ── Многосессийность: у каждого игрока своя партия ──────────────────────
+const { AsyncLocalStorage } = require("node:async_hooks");
+const als = new AsyncLocalStorage();   // «ярлычок» текущей партии
+const sessions = new Map();            // userId -> партия
+const CUR = () => als.getStore();      // партия текущего async-контекста
 
-// послать событие всем открытым вкладкам (и запомнить в буфер)
-function broadcast(ev) {
-  eventBuffer.push(ev);
-  const data = `data: ${JSON.stringify(ev)}\n\n`;
-  clients.forEach((res) => res.write(data));
+function makeSession(userId, humanName) {
+  return { userId, humanName, G: null, clients: [], eventBuffer: [], pending: null, finishedAt: null };
 }
 
-// ── обратный канал: браузер → сервер ──────────────────────────────────
-let pending = null;   // текущий ожидаемый ход человека: { kind, resolve }
-// поставить игру на паузу и ждать ответа человека из браузера
+// послать событие вкладкам ТЕКУЩЕЙ партии (и запомнить в её буфер)
+function broadcast(ev) {
+  const S = CUR();
+  if (!S) return;
+  S.eventBuffer.push(ev);
+  const data = `data: ${JSON.stringify(ev)}\n\n`;
+  S.clients.forEach((res) => res.write(data));
+}
+
+// поставить ТЕКУЩУЮ партию на паузу и ждать ответа её человека из браузера
 function awaitHuman(kind, payload = {}) {
+  const S = CUR();
   return new Promise((resolve) => {
-    pending = { kind, resolve };
+    S.pending = { kind, resolve };
     broadcast({ type: "your_turn", kind, ...payload });
   });
 }
 
-function startWeb(onFirstViewer) {
+function startWeb() {
   const app = express();
   app.use(express.json());
   app.get("/", (req, res) => {
@@ -95,20 +102,37 @@ function startWeb(onFirstViewer) {
     res.json({ user: auth.userByToken(auth.tokenFromReq(req)) });
   });
 
-  // приёмник действий человека (реплика, голос, ночной ход)
+  // приёмник действий человека (реплика, голос, ночной ход) — в его партию
   app.post("/action", (req, res) => {
-    if (pending) { const p = pending; pending = null; broadcast({ type: "your_turn_done" }); p.resolve(req.body || {}); }
+    const me = auth.userByToken(auth.tokenFromReq(req));
+    const S = me && sessions.get(me.id);
+    if (S && S.pending) {
+      const p = S.pending; S.pending = null;
+      als.run(S, () => broadcast({ type: "your_turn_done" }));
+      p.resolve(req.body || {});
+    }
     res.json({ ok: true });
   });
 
   app.get("/events", (req, res) => {
     res.writeHead(200, { "Content-Type": "text/event-stream", "Cache-Control": "no-cache", Connection: "keep-alive" });
     res.write("\n");
-    eventBuffer.forEach((ev) => res.write(`data: ${JSON.stringify(ev)}\n\n`)); // проигрываем уже случившееся
-    clients.push(res);
-    req.on("close", () => { clients = clients.filter((c) => c !== res); });
     const me = auth.userByToken(auth.tokenFromReq(req));
-    if (!gameStarted && me) { gameStarted = true; onFirstViewer(me.name); } // первый вошедший запускает партию под своим ником
+    if (!me) { res.end(); return; }                 // не вошёл — партии нет (замок и так не пустит)
+    let S = sessions.get(me.id);
+    const fresh = !S;
+    if (fresh) { S = makeSession(me.id, me.name); sessions.set(me.id, S); }  // первая вкладка — заводим партию
+    S.eventBuffer.forEach((ev) => res.write(`data: ${JSON.stringify(ev)}\n\n`)); // проигрываем уже случившееся
+    S.clients.push(res);
+    req.on("close", () => { S.clients = S.clients.filter((c) => c !== res); });
+    if (fresh) {                                     // новая партия — крутим её в собственном «ярлычке»
+      als.run(S, () => {
+        gameLoop().catch((e) => {
+          console.error("ФАТАЛЬНО:", e);
+          broadcast({ type: "result", text: "Ошибка сервера: " + e.message, red: true });
+        });
+      });
+    }
   });
 
   app.listen(PORT, () => {
@@ -186,7 +210,11 @@ function mockModel(prompt) {
 function extractJSON(text) { let t = text.replace(/```json/gi, "").replace(/```/g, "").trim(); const m = t.match(/\{[\s\S]*\}/); if (m) t = m[0]; return JSON.parse(t); }
 
 // ── Состояние игры ──────────────────────────────────────────────────────
-let G;
+// Состояние ТЕКУЩЕЙ партии. Обращения G.xxx автоматически адресуют партию из «ярлычка».
+const G = new Proxy({}, {
+  get(_, prop) { const s = CUR(); return s && s.G ? s.G[prop] : undefined; },
+  set(_, prop, val) { CUR().G[prop] = val; return true; },
+});
 const living = () => G.players.filter((p) => p.alive);
 const byName = (n) => G.players.find((p) => p.name === n);
 
@@ -468,9 +496,10 @@ function printCost() {
   console.log(`Оценка стоимости партии: ${cost < 0.01 ? "< $0.01" : "$" + cost.toFixed(3)} ${PROVIDER === "mock" ? "(mock — без сети)" : "(по прикидочным ценам, без учёта кэша)"}`);
 }
 
-async function gameLoop(humanName) {
+async function gameLoop() {
+  const humanName = CUR().humanName;
   const chars = shuffle(POOL).slice(0, 8);
-  G = { players: chars.map((c) => ({ ...c, alive: true, revealed: null })), priv: {}, day: 1, log: [],     lastDead: [], lastOut: null, winner: null };
+  CUR().G = { players: chars.map((c) => ({ ...c, alive: true, revealed: null })), priv: {}, day: 1, log: [],     lastDead: [], lastOut: null, winner: null };
   G.players.forEach((p) => (G.priv[p.name] = { checks: [], kills: [], saves: [], notes: [] }));
   const roles = shuffle(["mafia", "mafia", "maniac", "komissar", "doctor", "civilian", "civilian", "civilian"]);
   G.players.forEach((p, i) => (p.role = roles[i]));
@@ -511,13 +540,9 @@ async function gameLoop(humanName) {
     G.day++;
   }
   endGame();
+  CUR().finishedAt = Date.now();   // партия доиграна — метка для будущей уборки памяти
   printCost();
 }
 
-// Поднимаем веб-сервер; партия стартует, как только откроется первая вкладка.
-startWeb((humanName) => {
-  gameLoop(humanName).catch((e) => {
-    console.error("ФАТАЛЬНО:", e);
-    broadcast({ type: "result", text: "Ошибка сервера: " + e.message, red: true });
-  });
-});
+// Поднимаем веб-сервер; каждая партия стартует в /events, когда её игрок открывает вкладку.
+startWeb();
