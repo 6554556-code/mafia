@@ -102,6 +102,13 @@ function startWeb() {
     res.json({ user: auth.userByToken(auth.tokenFromReq(req)) });
   });
 
+  // «Сыграть ещё»: выкидываем партию игрока — при перезагрузке /events заведёт новую
+  app.post("/newgame", (req, res) => {
+    const me = auth.userByToken(auth.tokenFromReq(req));
+    if (me) sessions.delete(me.id);
+    res.json({ ok: true });
+  });
+
   // приёмник действий человека (реплика, голос, ночной ход) — в его партию
   app.post("/action", (req, res) => {
     const me = auth.userByToken(auth.tokenFromReq(req));
@@ -546,3 +553,12 @@ async function gameLoop() {
 
 // Поднимаем веб-сервер; каждая партия стартует в /events, когда её игрок открывает вкладку.
 startWeb();
+
+// Уборка памяти: раз в 5 минут выметаем партии, доигранные больше 30 минут назад.
+// Активные (finishedAt ещё не проставлен) и недавно законченные — не трогаем.
+setInterval(() => {
+  const now = Date.now();
+  for (const [uid, S] of sessions) {
+    if (S.finishedAt && now - S.finishedAt > 30 * 60 * 1000) sessions.delete(uid);
+  }
+}, 5 * 60 * 1000);
