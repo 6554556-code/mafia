@@ -142,6 +142,13 @@
   .vote{color:var(--ink-soft);font-size:13px;padding:2px 4px}
   .vote b{color:var(--ink)}
   .over{background:var(--ink);color:var(--paper);text-align:center;font-weight:700;padding:14px;font-size:16px}
+  .replay{display:block;width:100%;margin-top:8px;padding:12px;cursor:pointer;
+    background:var(--mafia-tx);color:#fff;border:2px solid var(--line);
+    font-weight:700;font-size:15px;text-align:center;letter-spacing:.5px;
+    box-shadow:3px 3px 0 rgba(44,44,40,.2)}
+  .replay:hover{filter:brightness(1.08)}
+  .replay:active{transform:translate(1px,1px);box-shadow:2px 2px 0 rgba(44,44,40,.2)}
+  .replay:disabled{opacity:.6;cursor:default}
 
   .conn{position:fixed;top:6px;right:10px;font-size:11px;color:#5a5a52;
     background:var(--paper);border:2px solid var(--line);padding:2px 8px}
@@ -426,8 +433,22 @@ function handle(e){
     case "vote":
       add(el("vote",`${esc(e.voter)} → <b>${esc(e.target)}</b>`+(e.reason?` · ${esc(e.reason)}`:"")));break;
     case "gameover":
-      add(el("over",esc(e.text)));break;
+      add(el("over",esc(e.text)));showReplay();break;
   }
+}
+
+// кнопка «Сыграть ещё»: просим сервер забыть доигранную партию и перезагружаемся —
+// новая заведётся сама на /events (тем же комиссаром, как задано при запуске)
+function showReplay(){
+  if(document.getElementById('replayBtn')) return;
+  const b=document.createElement('button');
+  b.id='replayBtn'; b.className='replay pixel'; b.textContent='🔄 Сыграть ещё';
+  b.onclick=async()=>{
+    b.disabled=true; b.textContent='Запускаем новую…';
+    try{ await fetch('/newgame',{method:'POST'}); }catch(_){}
+    location.reload();
+  };
+  add(b);
 }
 
 // ── связь с сервером (SSE) + демо-заглушка, если сервера ещё нет ─────────────
