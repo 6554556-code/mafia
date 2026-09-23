@@ -70,6 +70,8 @@
   body.blind div.act.secret{display:none}
   body.blind .role.secret{visibility:hidden}
   .seat.me .ava{box-shadow:0 0 0 2px #b5352c,0 0 0 4px #b5352c55}
+  .chip.door{cursor:pointer;user-select:none;font-size:16px;opacity:.7;transition:opacity .15s}
+  .chip.door:hover{opacity:1}
 
   /* ── ряд участников: сетка до 8 в ряд, дальше 2-й ряд (без скрола) ── */
   .seatsWrap{padding:5px}
@@ -208,6 +210,7 @@
       <div class="chip day pixel"><span>☀</span><span id="dayLabel">День 1</span></div>
       <div class="chip you pixel" id="youChip" style="display:none">Вы: <b id="youRole"></b></div>
       <div class="chip mode pixel" id="eyeBtn" onclick="document.body.classList.toggle('blind');this.classList.toggle('on')"><span class="eye">👁</span><span>Глаз бога</span></div>
+      <div class="chip door pixel" id="logoutBtn" title="Выход" onclick="fetch('/logout',{method:'POST'}).finally(()=>location.href='/auth.html')">🚪</div>
     </div>
 
     <div class="panel seatsWrap">
