@@ -366,6 +366,16 @@ async function aiWhisperReply(rec, fromName, text) {
   const prompt = `${baseCtx(rec)}\n\nТебе тайно шепнул один-на-один ${fromName}: «${text}». ВАЖНО: личку шлют только комиссар и доктор — мафия в личку не пишет, так что это СОЮЗНИК, а не ловушка. Если он назвался комиссаром и сказал роль про ТЕБЯ — сверь со своей: совпало значит он настоящий комиссар, верь ему и держись вместе. Ответь ОДНИМ коротким дружелюбным сообщением (согласен объединиться? какой план?). Только сообщение.`;
   try { let t = await callModel(prompt); return t.replace(new RegExp(`^\\s*${rec.name}\\s*:\\s*`, "i"), "").trim() || "…"; } catch (e) { warn(e); return "…"; }
 }
+// Ответ на входящий шёпот: если получатель — человек, отвечает руками; иначе ИИ как раньше.
+// Ответ (в т.ч. отказ/молчание) оседает в заметках обоих, так что собеседник-ИИ учтёт его дальше.
+async function whisperReply(rec, fromName, text) {
+  if (rec.human) {
+    const ans = await awaitHuman("whisper_reply", { from: fromName, text });
+    const t = (ans && typeof ans.text === "string") ? ans.text.trim() : "";
+    return t || "(промолчал)";
+  }
+  return aiWhisperReply(rec, fromName, text);
+}
 async function aiDoctorSave(doctor, alive) {
   const list = alive.map((x) => x.name);
   const prompt = `${baseCtx(doctor)}\n\nНочь ${G.day}. Ты доктор, спасаешь одного от смерти (можно себя). Твои правила:\n— Разбери прошлую ночь: кого ты лечил и что вышло (тихая ночь = ты спас мишень, значит он вероятно мирный).\n— Лечи вероятные мишени врагов: активных мирных. Если кто-то в обсуждении раскрылся КОМИССАРОМ (проверь ход игры выше) — лечи его, он мишень №1.\n— Если ты сам публично назвался доктором — лечи себя, ты теперь главная мишень.\nЖивые: ${list.join(", ")}. Ответь ТОЛЬКО JSON: {"target":"Имя"}.`;
@@ -427,15 +437,15 @@ async function doNight() {
       const text = (ans && ans.text || "").toString().trim().slice(0, 200);
       if (ans && ans.to && !ans.skip && text) {
         const rec = byName(ans.to);
-        if (rec && rec.alive) { postPM("whisper", kom, [kom, rec], text); const rep = await aiWhisperReply(rec, kom.name, text); postPM("whisper", rec, [kom, rec], rep); }
+        if (rec && rec.alive) { postPM("whisper", kom, [kom, rec], text); const rep = await whisperReply(rec, kom.name, text); postPM("whisper", rec, [kom, rec], rep); }
       } else secretAct("… ты решил не шептаться этой ночью");
     } else {
       const dec = await aiKomWhisper(kom, alive.filter((p) => p !== kom));
-      if (dec.to) { const rec = byName(dec.to); postPM("whisper", kom, [kom, rec], dec.text); const rep = await aiWhisperReply(rec, kom.name, dec.text); postPM("whisper", rec, [kom, rec], rep); } else secretAct(`… комиссар (${kom.name}) решил пока не шептаться`);
+      if (dec.to) { const rec = byName(dec.to); postPM("whisper", kom, [kom, rec], dec.text); const rep = await whisperReply(rec, kom.name, dec.text); postPM("whisper", rec, [kom, rec], rep); } else secretAct(`… комиссар (${kom.name}) решил пока не шептаться`);
     }
   }
 
-  if (doctor && ds && ds !== doctor.name) { const rec = byName(ds); if (rec && rec.alive) { const dec = await aiDoctorWhisper(doctor, rec); if (dec.to) { postPM("whisper", doctor, [doctor, rec], dec.text); const rep = await aiWhisperReply(rec, doctor.name, dec.text); postPM("whisper", rec, [doctor, rec], rep); } else secretAct(`… доктор (${doctor.name}) решил не раскрываться спасённому`); } }
+  if (doctor && ds && ds !== doctor.name) { const rec = byName(ds); if (rec && rec.alive) { const dec = await aiDoctorWhisper(doctor, rec); if (dec.to) { postPM("whisper", doctor, [doctor, rec], dec.text); const rep = await whisperReply(rec, doctor.name, dec.text); postPM("whisper", rec, [doctor, rec], rep); } else secretAct(`… доктор (${doctor.name}) решил не раскрываться спасённому`); } }
 
   mafia.forEach((m) => { if (mt) G.priv[m.name].kills.push(mt); });
   if (maniac && kt) G.priv[maniac.name].kills.push(kt);
