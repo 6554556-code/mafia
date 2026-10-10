@@ -109,6 +109,15 @@ function startWeb() {
     res.json({ ok: true });
   });
 
+  // Смена ника (применится со следующей партии)
+  app.post("/rename", (req, res) => {
+    const me = auth.userByToken(auth.tokenFromReq(req));
+    if (!me) return res.status(401).json({ error: "Не вошёл" });
+    const r = auth.rename(me.id, (req.body || {}).name);
+    if (r.error) return res.status(400).json({ error: r.error });
+    res.json({ user: r.user });
+  });
+
   // приёмник действий человека (реплика, голос, ночной ход) — в его партию
   app.post("/action", (req, res) => {
     const me = auth.userByToken(auth.tokenFromReq(req));
