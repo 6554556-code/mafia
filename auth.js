@@ -110,4 +110,15 @@ function parseCookies(req) {
 }
 function tokenFromReq(req) { return parseCookies(req).sid || null; }
 
-module.exports = { register, login, logout, userByToken, tokenFromReq };
+// ── Смена ника (те же правила, что при регистрации: длина, набор, уникальность) ──
+function rename(userId, newName) {
+  newName = String(newName || "").trim();
+  if (!validName(newName)) return { error: "Ник: 2–16 символов — буквы, цифры, пробел, дефис или подчёркивание" };
+  const newLower = newName.toLowerCase();
+  const taken = db.prepare("SELECT id FROM users WHERE name_lower = ? AND id != ?").get(newLower, userId);
+  if (taken) return { error: "Этот ник уже занят" };
+  db.prepare("UPDATE users SET name = ?, name_lower = ? WHERE id = ?").run(newName, newLower, userId);
+  return { user: db.prepare("SELECT id, email, name FROM users WHERE id = ?").get(userId) };
+}
+
+module.exports = { register, login, logout, userByToken, tokenFromReq, rename };
