@@ -8,6 +8,8 @@ const path = require("path");
 
 // База — простой файл рядом с игрой. Создастся сам при первом запуске.
 const db = new DatabaseSync(path.join(__dirname, "mafia.db"));
+const fs = require("fs");
+const AVA_DIR = path.join(__dirname, "public", "avatars");
 
 // Таблицы: пользователи и их сессии. IF NOT EXISTS — безопасно при каждом старте.
 db.exec(`
@@ -25,6 +27,25 @@ db.exec(`
     created INTEGER NOT NULL
   );
 `);
+
+// Миграция: колонка avatar. База НЕ пересоздаётся — ALTER тихо игнорится, если колонка уже есть.
+try { db.exec("ALTER TABLE users ADD COLUMN avatar TEXT"); } catch (_) {}
+
+// Список .png в папке avatars/<sub>, в виде "<sub>/файл.png"
+function listDir(sub) {
+  try { return fs.readdirSync(path.join(AVA_DIR, sub)).filter((f) => /\.png$/i.test(f)).map((f) => sub + "/" + f).sort(); }
+  catch (_) { return []; }
+}
+function randomNeutral() {
+  const list = listDir("neutral");
+  return list.length ? list[(Math.random() * list.length) | 0] : null;
+}
+// Разовая раздача случайного нейтрального лица тем, у кого его ещё нет (аккаунты до этой фичи)
+try {
+  for (const u of db.prepare("SELECT id FROM users WHERE avatar IS NULL").all()) {
+    const a = randomNeutral(); if (a) db.prepare("UPDATE users SET avatar = ? WHERE id = ?").run(a, u.id);
+  }
+} catch (_) {}
 
 // ── Пароли: scrypt + случайная соль. В базе только хэш, никогда не сам пароль. ──
 function hashPassword(password) {
@@ -64,8 +85,8 @@ function register(email, password, name) {
   if (nameTaken) return { error: "Этот ник уже занят" };
 
   const info = db.prepare(
-    "INSERT INTO users (email, pass, name, name_lower, created) VALUES (?, ?, ?, ?, ?)"
-  ).run(email, hashPassword(password), name, nameLower, Date.now());
+    "INSERT INTO users (email, pass, name, name_lower, avatar, created) VALUES (?, ?, ?, ?, ?, ?)"
+  ).run(email, hashPassword(password), name, nameLower, randomNeutral(), Date.now());
 
   return startSession(info.lastInsertRowid);
 }
@@ -86,7 +107,7 @@ function startSession(userId) {
   const token = crypto.randomBytes(32).toString("hex");
   db.prepare("INSERT INTO sessions (token, user_id, created) VALUES (?, ?, ?)")
     .run(token, userId, Date.now());
-  const user = db.prepare("SELECT id, email, name FROM users WHERE id = ?").get(userId);
+  const user = db.prepare("SELECT id, email, name, avatar FROM users WHERE id = ?").get(userId);
   return { token, user };
 }
 function logout(token) {
@@ -96,7 +117,7 @@ function userByToken(token) {
   if (!token) return null;
   const s = db.prepare("SELECT user_id FROM sessions WHERE token = ?").get(token);
   if (!s) return null;
-  return db.prepare("SELECT id, email, name FROM users WHERE id = ?").get(s.user_id) || null;
+  return db.prepare("SELECT id, email, name, avatar FROM users WHERE id = ?").get(s.user_id) || null;
 }
 
 // ── Достаём токен сессии из cookie входящего запроса ──
@@ -118,7 +139,20 @@ function rename(userId, newName) {
   const taken = db.prepare("SELECT id FROM users WHERE name_lower = ? AND id != ?").get(newLower, userId);
   if (taken) return { error: "Этот ник уже занят" };
   db.prepare("UPDATE users SET name = ?, name_lower = ? WHERE id = ?").run(newName, newLower, userId);
-  return { user: db.prepare("SELECT id, email, name FROM users WHERE id = ?").get(userId) };
+  return { user: db.prepare("SELECT id, email, name, avatar FROM users WHERE id = ?").get(userId) };
 }
 
-module.exports = { register, login, logout, userByToken, tokenFromReq, rename };
+// ── Аватары ──
+// Сохранить выбор лица. Пускаем только male/female/neutral (не characters),
+// только простое имя файла (без слешей и «..») и только если файл реально есть.
+function setAvatar(userId, file) {
+  file = String(file || "");
+  if (!/^(male|female|neutral)\/[A-Za-z0-9_.-]+\.png$/.test(file)) return { error: "Недопустимое лицо" };
+  if (!fs.existsSync(path.join(AVA_DIR, file))) return { error: "Такого лица нет" };
+  db.prepare("UPDATE users SET avatar = ? WHERE id = ?").run(file, userId);
+  return { user: db.prepare("SELECT id, email, name, avatar FROM users WHERE id = ?").get(userId) };
+}
+// Лица для сетки выбора: две группы — мужские и женские (свободные, без ИИшных из characters)
+function listAvatars() { return { male: listDir("male"), female: listDir("female") }; }
+
+module.exports = { register, login, logout, userByToken, tokenFromReq, rename, setAvatar, listAvatars };
