@@ -221,6 +221,7 @@
   }
   .votebtn:hover{background:#fff}
   .votebtn:active{transform:translateY(1px)}
+  .votebtn.suggested{background:var(--mafia-bg);border-color:var(--mafia-tx);color:var(--mafia-tx)}
   .votebtn.off{opacity:.35;pointer-events:none}
 
   .feed::-webkit-scrollbar{width:12px}
@@ -363,6 +364,17 @@ function showInput(e){
     voteMode.style.display="";
     voteReason.style.display="none";
     nameButtons(voteBtns, e.candidates, (name)=>{ hideInput(); sendAction({target:name}); });
+    inputbar.classList.add('on');
+  } else if(kind==="kill_mafia"){
+    inputLbl.textContent = e.suggest ? "Ночь. Напарник предлагает жертву — решай:" : "Ночь. Кого уберём?";
+    voteMode.style.display="";
+    voteReason.style.display="none";
+    nameButtons(voteBtns, e.candidates, (name)=>{ hideInput(); sendAction({target:name}); });
+    if(e.suggest){   // подсветить предложенную напарником цель
+      voteBtns.querySelectorAll('.votebtn').forEach(b=>{
+        if(b.textContent===e.suggest){ b.classList.add('suggested'); b.textContent="👉 "+e.suggest; }
+      });
+    }
     inputbar.classList.add('on');
   } else if(kind==="heal"){
     inputLbl.textContent="Ночь. Кого лечить?";
