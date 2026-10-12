@@ -412,7 +412,15 @@ async function doNight() {
   const killable = alive.filter((p) => p.role !== "mafia");
   const mt = plurality(await Promise.all(mafia.map((m) => aiNight(m, "kill", killable))));
   if (mt) secretAct(`🔪 мафия целится в: ${mt}`);
-  const kt = maniac ? await aiNight(maniac, "maniac", alive.filter((p) => p !== maniac)) : null;
+  let kt = null;
+  if (maniac) {
+    const prey = alive.filter((p) => p !== maniac);     // маньяк бьёт любого, кроме себя
+    if (maniac.human) {
+      const names = prey.map((p) => p.name);
+      const ans = await awaitHuman("kill_maniac", { candidates: names });
+      kt = names.includes(ans.target) ? ans.target : names[(Math.random() * names.length) | 0];
+    } else kt = await aiNight(maniac, "maniac", prey);
+  }
   if (kt) secretAct(`🩸 маньяк (${maniac.name}) целится в: ${kt}`);
   let ds = null;
   if (doctor) {
