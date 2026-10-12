@@ -357,6 +357,16 @@ async function aiMafiaChat(p, convo) {
   const prompt = `${baseCtx(p)}\n\nТы в тайном чате мафии с напарником (мирные не видят). Уже сказано:\n${convo.join("\n") || "— пусто —"}\n${task}\nНапиши напарнику ОДНО короткое сообщение. Только сообщение.`;
   try { let t = await callModel(prompt); return t.replace(new RegExp(`^\\s*${p.name}\\s*:\\s*`, "i"), "").trim() || "…"; } catch (e) { warn(e); return "…"; }
 }
+// Напарник-ИИ предлагает человеку-мафии жертву с аргументом (ночь 2+)
+async function aiMafiaSuggest(p, killable) {
+  const list = killable.map((o) => o.name).filter((n) => n !== p.name);
+  const prompt = `${baseCtx(p)}\n\nТы в тайном чате мафии с напарником (это человек, он решает). Ночь ${G.day}. Предложи напарнику, кого убить этой ночью, и КОРОТКО аргументируй по реальным дневным репликам: кто похож на комиссара/доктора, кто вас подозревает, кого удобно убрать. Доступные цели: ${list.join(", ")}. Ответь ТОЛЬКО JSON: {"target":"Имя","text":"предложение напарнику одной живой фразой"}.`;
+  try {
+    const j = extractJSON(await callModel(prompt));
+    const target = list.find((n) => j.target && n.toLowerCase() === String(j.target).toLowerCase()) || list[(Math.random() * list.length) | 0];
+    return { target, text: (j.text || `Давай уберём ${target}.`).toString().slice(0, 200) };
+  } catch (e) { warn(e); const target = list[(Math.random() * list.length) | 0]; return { target, text: `Давай уберём ${target}.` }; }
+}
 async function aiKomWhisper(kom, others) {
   const prompt = `${baseCtx(kom)}\n\nТы знаешь ТОЧНЫЕ роли проверенных. Хочешь тайно шепнуть кому-то из живых, чтобы объединиться — например, проверенному ДОКТОРУ или надёжному МИРНОМУ (чтобы днём он подтвердил твоё раскрытие)? Если рано или не с кем — не шепчи. Живые: ${others.map((o) => o.name).join(", ")}. Ответь ТОЛЬКО JSON: {"to":"Имя или null","text":"сообщение"}.`;
   try { const j = extractJSON(await callModel(prompt)); if (!j.to || String(j.to).toLowerCase() === "null") return { to: null }; const to = others.map((o) => o.name).find((n) => n.toLowerCase() === String(j.to).toLowerCase()); return to ? { to, text: (j.text || "Я комиссар, работаем вместе.").toString().slice(0, 200) } : { to: null }; }
@@ -407,10 +417,28 @@ async function doNight() {
   const doctor = alive.find((p) => p.role === "doctor");
   const kom = alive.find((p) => p.role === "komissar");
 
-  if (mafia.length >= 2) { const convo = []; for (const m of mafia) { const t = await aiMafiaChat(m, convo); postPM("mafia", m, mafia, t); convo.push(`${m.name}: ${t}`); await sleep(PACING_MS); } }
-
   const killable = alive.filter((p) => p.role !== "mafia");
-  const mt = plurality(await Promise.all(mafia.map((m) => aiNight(m, "kill", killable))));
+  const humanMafia = mafia.find((m) => m.human);
+  let mt;
+  if (humanMafia) {
+    // Человек в мафии решает жертву. Напарник-ИИ: ночь 1 — передаёт ход; ночь 2+ — предлагает с аргументом.
+    const mate = mafia.find((m) => m !== humanMafia);   // напарник (если ещё жив)
+    let suggest = null;
+    if (mate && G.day > 1) {
+      const dec = await aiMafiaSuggest(mate, killable);
+      suggest = dec.target;
+      postPM("mafia", mate, mafia, dec.text);           // предложение видно в чате мафии
+    } else if (mate) {
+      postPM("mafia", mate, mafia, "Ты за старшего, напарник. Кого уберём этой ночью?");
+    }
+    const names = killable.map((p) => p.name);
+    const ans = await awaitHuman("kill_mafia", { candidates: names, suggest });
+    mt = names.includes(ans.target) ? ans.target : (suggest || names[(Math.random() * names.length) | 0]);
+  } else {
+    // Только ИИ-мафия — как раньше: чат + голосование большинством.
+    if (mafia.length >= 2) { const convo = []; for (const m of mafia) { const t = await aiMafiaChat(m, convo); postPM("mafia", m, mafia, t); convo.push(`${m.name}: ${t}`); await sleep(PACING_MS); } }
+    mt = plurality(await Promise.all(mafia.map((m) => aiNight(m, "kill", killable))));
+  }
   if (mt) secretAct(`🔪 мафия целится в: ${mt}`);
   let kt = null;
   if (maniac) {
