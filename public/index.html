@@ -358,8 +358,38 @@ function showInput(e){
       else sendAction({target:name});
     });
     inputbar.classList.add('on');
+  } else if(kind==="heal"){
+    inputLbl.textContent="Ночь. Кого лечить?";
+    voteMode.style.display="";
+    voteReason.style.display="none";
+    // себя — первой кнопкой с особой подписью, остальных — как есть
+    const others=(e.candidates||[]).filter(n=>n!==e.self);
+    const list=[e.self,...others];
+    nameButtons(voteBtns, list, (name)=>{ hideInput(); sendAction({target:name}); });
+    const first=voteBtns.querySelector('.votebtn');
+    if(first) first.textContent="🩺 Я (лечить себя)";
+    inputbar.classList.add('on');
+  } else if(kind==="doc_whisper"){
+    inputLbl.textContent="Ты спас "+(e.to||"")+". Шепнуть ему, что прикрыл?";
+    whisperMode.style.display="";
+    whisperText.value="";
+    whisperText.placeholder="Что шепнуть "+(e.to||"")+"…";
+    nameButtons(whisperBtns, [e.to], (name)=>{
+      const t=whisperText.value.trim();
+      if(!t){ whisperText.focus(); return; }
+      hideInput(); sendAction({text:t});
+    });
+    const first=whisperBtns.querySelector('.votebtn');
+    if(first) first.textContent="🔒 Шепнуть "+(e.to||"");
+    document.getElementById('btnNoWhisper').textContent="Не раскрываться";
+    const toggle=()=>{ const on=whisperText.value.trim().length>0;
+      whisperBtns.querySelectorAll('.votebtn').forEach(b=>b.classList.toggle('off',!on)); };
+    whisperText.oninput=toggle; toggle();
+    inputbar.classList.add('on'); whisperText.focus();
   } else if(kind==="whisper"){
     inputLbl.textContent="Шепнуть кому-то? Напиши сообщение, потом выбери кому:";
+    whisperText.placeholder="Что шепнуть (по желанию)…";
+    document.getElementById('btnNoWhisper').textContent="Не шептаться";
     whisperMode.style.display="";
     whisperText.value="";
     nameButtons(whisperBtns, e.candidates, (name)=>{
