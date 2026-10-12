@@ -415,7 +415,13 @@ async function doNight() {
   const kt = maniac ? await aiNight(maniac, "maniac", alive.filter((p) => p !== maniac)) : null;
   if (kt) secretAct(`🩸 маньяк (${maniac.name}) целится в: ${kt}`);
   let ds = null;
-  if (doctor) ds = G.day === 1 ? doctor.name : await aiDoctorSave(doctor, alive);
+  if (doctor) {
+    if (doctor.human) {   // человек-доктор сам выбирает кого лечить (себя можно) — каждую ночь, включая 1-ю
+      const names = alive.map((p) => p.name);
+      const ans = await awaitHuman("heal", { candidates: names, self: doctor.name });
+      ds = names.includes(ans.target) ? ans.target : doctor.name;
+    } else ds = G.day === 1 ? doctor.name : await aiDoctorSave(doctor, alive);
+  }
   if (ds) secretAct(`🩺 доктор (${doctor.name}) лечит: ${ds}`);
   let checkName = null;
   if (kom) {
@@ -445,7 +451,20 @@ async function doNight() {
     }
   }
 
-  if (doctor && ds && ds !== doctor.name) { const rec = byName(ds); if (rec && rec.alive) { const dec = await aiDoctorWhisper(doctor, rec); if (dec.to) { postPM("whisper", doctor, [doctor, rec], dec.text); const rep = await whisperReply(rec, doctor.name, dec.text); postPM("whisper", rec, [doctor, rec], rep); } else secretAct(`… доктор (${doctor.name}) решил не раскрываться спасённому`); } }
+  if (doctor && ds && ds !== doctor.name) {
+    const rec = byName(ds);
+    if (rec && rec.alive) {
+      if (doctor.human) {   // человек-доктор решает сам: шепнуть спасённому или смолчать
+        const ans = await awaitHuman("doc_whisper", { to: rec.name });
+        const text = (ans && ans.text || "").toString().trim().slice(0, 200);
+        if (text && !(ans && ans.skip)) { postPM("whisper", doctor, [doctor, rec], text); const rep = await whisperReply(rec, doctor.name, text); postPM("whisper", rec, [doctor, rec], rep); }
+        else secretAct(`… доктор (${doctor.name}) решил не раскрываться спасённому`);
+      } else {
+        const dec = await aiDoctorWhisper(doctor, rec);
+        if (dec.to) { postPM("whisper", doctor, [doctor, rec], dec.text); const rep = await whisperReply(rec, doctor.name, dec.text); postPM("whisper", rec, [doctor, rec], rep); } else secretAct(`… доктор (${doctor.name}) решил не раскрываться спасённому`);
+      }
+    }
+  }
 
   mafia.forEach((m) => { if (mt) G.priv[m.name].kills.push(mt); });
   if (maniac && kt) G.priv[maniac.name].kills.push(kt);
