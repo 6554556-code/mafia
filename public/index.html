@@ -358,6 +358,12 @@ function showInput(e){
       else sendAction({target:name});
     });
     inputbar.classList.add('on');
+  } else if(kind==="kill_maniac"){
+    inputLbl.textContent="Ночь. Кого убить?";
+    voteMode.style.display="";
+    voteReason.style.display="none";
+    nameButtons(voteBtns, e.candidates, (name)=>{ hideInput(); sendAction({target:name}); });
+    inputbar.classList.add('on');
   } else if(kind==="heal"){
     inputLbl.textContent="Ночь. Кого лечить?";
     voteMode.style.display="";
