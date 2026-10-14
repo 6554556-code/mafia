@@ -465,7 +465,7 @@ function render(){
     const seat=document.createElement('div');
     seat.className="seat"+(p.alive?"":" dead")+(p.name===myName?" me":"");
     seat.innerHTML=`
-      <div class="ava">${(p.name||'?')[0]}${p.av?`<img src="avatars/${p.av}" alt="" onerror="this.remove()">`:''}</div>
+      <div class="ava" style="cursor:pointer" onclick="showBio('${(p.name||'').replace(/'/g,"\\'")}')" title="Досье">${(p.name||'?')[0]}${p.av?`<img src="avatars/${p.av}" alt="" onerror="this.remove()">`:''}</div>
       <div class="nm" style="color:${deep(p.c)}">${p.name}</div>
       <div class="role${p.alive&&p.name!==myName?' secret':''}" style="color:${deep(p.c)}">${roleRu[p.role]||''}</div>
       <div class="bar"><i></i></div>`;
@@ -516,7 +516,7 @@ function handle(e){
     case "note":
       add(el("narr",esc(e.text)));break;
     case "roster":
-    players=e.players.map(p=>({name:p.name,c:p.c,av:p.av,role:p.role,alive:p.alive!==false}));
+    players=e.players.map(p=>({name:p.name,c:p.c,av:p.av,role:p.role,alive:p.alive!==false,age:p.age,job:p.job,hobby:p.hobby,persona:p.persona}));
       if(e.day)dayLabel.textContent="День "+e.day;
       render();break;
     case "day":
@@ -554,6 +554,22 @@ function handle(e){
 }
 
 // ── Настройки (колесико): смена ника ──
+// Мини-справка по клику на аву — ТОЛЬКО публичное досье, НИКОГДА роль/темперамент
+function showBio(name){
+  const p=players.find(x=>x.name===name);
+  if(!p) return;
+  document.getElementById('bioName').textContent=p.name;
+  const ava=document.getElementById('bioAva');
+  ava.innerHTML=p.av?`<img src="avatars/${p.av}" alt="" style="width:100%;height:100%;object-fit:cover;image-rendering:pixelated">`:'';
+  const rows=[];
+  if(p.age) rows.push(`<b>Возраст:</b> ${p.age}`);
+  if(p.job) rows.push(`<b>Кто по жизни:</b> ${p.job}`);
+  if(p.hobby) rows.push(`<b>Увлечения:</b> ${p.hobby}`);
+  if(p.persona) rows.push(`<b>Характер:</b> ${esc(p.persona)}`);
+  document.getElementById('bioInfo').innerHTML=rows.join('<br>')||'Пока ничего не известно.';
+  document.getElementById('bioModal').style.display='flex';
+}
+function closeBio(){ document.getElementById('bioModal').style.display='none'; }
 function openSettings(){
   const msg=document.getElementById('setMsg'); msg.className='setmsg'; msg.textContent='';
   document.getElementById('settings').style.display='flex';
@@ -603,7 +619,7 @@ async function saveNick(){
     msg.className='setmsg ok'; msg.textContent='Ник сохранён — появится со следующей партии ✓';
   }catch(e){ msg.className='setmsg err'; msg.textContent='Сервер не отвечает'; }
 }
-document.addEventListener('keydown',e=>{ if(e.key==='Escape') closeSettings(); });
+document.addEventListener('keydown',e=>{ if(e.key==='Escape'){ closeSettings(); closeBio(); } });
 
 // кнопка «Сыграть ещё»: просим сервер забыть доигранную партию и перезагружаемся —
 // новая заведётся сама на /events (тем же комиссаром, как задано при запуске)
@@ -669,6 +685,13 @@ function stopDemo(){if(demoTimer){clearInterval(demoTimer);demoTimer=null;}}
 
 connect();
 </script>
+<div class="modal pixel" id="bioModal" style="display:none" onclick="if(event.target===this)closeBio()">
+  <div class="modal-card">
+    <div class="modal-head"><span id="bioName"></span><span class="x" onclick="closeBio()">✕</span></div>
+    <div id="bioAva" style="width:120px;aspect-ratio:5/4;margin:0 auto 12px;border:2px solid var(--line);background:#cfcabc;overflow:hidden"></div>
+    <div id="bioInfo" style="font-size:14px;line-height:1.7"></div>
+  </div>
+</div>
 <div class="modal pixel" id="settings" style="display:none" onclick="if(event.target===this)closeSettings()">
   <div class="modal-card">
     <div class="modal-head"><span>⚙️ Настройки</span><span class="x" onclick="closeSettings()">✕</span></div>
