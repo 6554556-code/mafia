@@ -21,7 +21,7 @@ const RETRY_DELAYS = [2000, 5000];  // паузы перед повторами 
 // Провайдеры: endpoint + модель + переменная окружения с ключом.
 const PROVIDERS = {
   groq:     { url: "https://api.groq.com/openai/v1/chat/completions", model: "openai/gpt-oss-120b", keyEnv: "GROQ_API_KEY" },
-  deepseek: { url: "https://api.deepseek.com/chat/completions",        model: "deepseek-v4-flash",       keyEnv: "DEEPSEEK_API_KEY" },
+  deepseek: { url: "https://api.deepseek.com/chat/completions",        model: "deepseek-flash",          keyEnv: "DEEPSEEK_API_KEY" },
   grok:     { url: "https://api.x.ai/v1/chat/completions",             model: "grok-4-fast",             keyEnv: "XAI_API_KEY" },
   mock:     { url: null, model: "mock", keyEnv: null },
 };
@@ -29,11 +29,17 @@ const PROVIDERS = {
 // Цены за 1М токенов (вход/выход) — для оценки стоимости партии. Приблизительно.
 const PRICES = {
   "llama-3.3-70b-versatile": { in: 0.59, out: 0.79 },
-  "deepseek-v4-flash":       { in: 0.14, out: 0.28 },
+  // DeepSeek: цены ПИКОВЫЕ (с запасом); вне пика вдвое дешевле. Пик: 01–04 и 06–10 UTC по будням (= 04–07 и 09–13 МСК).
+  "deepseek-flash":          { in: 0.30, out: 1.20 },
+  "deepseek-v4-flash":       { in: 0.30, out: 1.20 },   // старое имя, его обслуживает тот же Flash
+  "deepseek-v4-pro":         { in: 1.32, out: 3.96 },
   "grok-4-fast":             { in: 0.20, out: 0.50 },
   "openai/gpt-oss-120b":     { in: 0.15, out: 0.60 },
   "mock":                    { in: 0, out: 0 },
 };
+
+// Модель можно сменить прямо в команде запуска, без правки кода: MODEL=deepseek-v4-pro
+if (process.env.MODEL && PROVIDERS[PROVIDER]) PROVIDERS[PROVIDER].model = process.env.MODEL;
 
 // ── ANSI-цвета ──────────────────────────────────────────────────────────
 const A = (code, s) => `\x1b[38;5;${code}m${s}\x1b[0m`;
