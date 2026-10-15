@@ -8,7 +8,7 @@ require("dotenv").config({ path: require("path").join(require("os").homedir(), "
 // ─────────────────────────────────────────────────────────────────────────
 
 // ── НАСТРОЙКИ (меняй тут) ───────────────────────────────────────────────
-const PROVIDER = process.env.PROVIDER || "groq"; // groq | deepseek | grok | mock
+const PROVIDER = process.env.PROVIDER || "groq"; // groq | deepseek | openrouter | grok | mock
 const SHOW_SECRETS = true;   // печатать роли, тайные мысли и личку (режим наблюдателя)
 const HUMAN = process.env.HUMAN === "1" || process.env.HUMAN === "true"; // за столом сидит человек
 const HUMAN_ROLE = process.env.HUMAN_ROLE || null;   // какую роль дать человеку (komissar/doctor/mafia/…); пусто = случайная
@@ -23,6 +23,8 @@ const PROVIDERS = {
   groq:     { url: "https://api.groq.com/openai/v1/chat/completions", model: "openai/gpt-oss-120b", keyEnv: "GROQ_API_KEY" },
   deepseek: { url: "https://api.deepseek.com/chat/completions",        model: "deepseek-flash",          keyEnv: "DEEPSEEK_API_KEY" },
   grok:     { url: "https://api.x.ai/v1/chat/completions",             model: "grok-4-fast",             keyEnv: "XAI_API_KEY" },
+  // OpenRouter: тот же мозг DeepSeek-Flash, но на хостингах в Европе/США — без китайской очереди.
+  openrouter: { url: "https://openrouter.ai/api/v1/chat/completions",  model: "deepseek/deepseek-v4.1-flash", keyEnv: "OPENROUTER_API_KEY" },
   mock:     { url: null, model: "mock", keyEnv: null },
 };
 
@@ -33,6 +35,7 @@ const PRICES = {
   "deepseek-flash":          { in: 0.30, out: 1.20 },
   "deepseek-v4-flash":       { in: 0.30, out: 1.20 },   // старое имя, его обслуживает тот же Flash
   "deepseek-v4-pro":         { in: 1.32, out: 3.96 },
+  "deepseek/deepseek-v4.1-flash": { in: 0.15, out: 0.60 },   // OpenRouter: цена зависит от хостинга; точную пришлёт сам OpenRouter
   "grok-4-fast":             { in: 0.20, out: 0.50 },
   "openai/gpt-oss-120b":     { in: 0.15, out: 0.60 },
   "mock":                    { in: 0, out: 0 },
@@ -226,7 +229,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const plurality = (names) => { const t = {}; names.forEach((n) => (t[n] = (t[n] || 0) + 1)); const m = Math.max(...Object.values(t)); return shuffle(Object.keys(t).filter((n) => t[n] === m))[0]; };
 
 // ── Учёт токенов ────────────────────────────────────────────────────────
-let USAGE = { in: 0, out: 0, calls: 0 };
+let USAGE = { in: 0, out: 0, calls: 0, cost: 0 };
 
 // ── Вызов модели ────────────────────────────────────────────────────────
 async function callModel(prompt) {
@@ -235,7 +238,12 @@ async function callModel(prompt) {
   const cfg = PROVIDERS[PROVIDER];
   const key = process.env[cfg.keyEnv];
   if (!key) throw new Error(`Нет ключа: задай переменную окружения ${cfg.keyEnv}`);
-  const body = JSON.stringify({ model: cfg.model, temperature: TEMPERATURE, max_tokens: MAX_TOKENS, messages: [{ role: "user", content: prompt }], ...(PROVIDER === "deepseek" ? { thinking: { type: "disabled" } } : {}) });
+  // «Думание» выключаем (иначе жжёт токены и тянет время). У каждого провайдера свой выключатель.
+  // OpenRouter: ещё и обходим хостинг самого DeepSeek, чтобы не встать в китайскую очередь в их часы пик.
+  const extra = PROVIDER === "deepseek" ? { thinking: { type: "disabled" } }
+    : PROVIDER === "openrouter" ? { reasoning: { effort: "none" }, provider: { ignore: ["deepseek"] } }
+    : {};
+  const body = JSON.stringify({ model: cfg.model, temperature: TEMPERATURE, max_tokens: MAX_TOKENS, messages: [{ role: "user", content: prompt }], ...extra });
   // Страховка: таймаут на каждый запрос + повторы при перегрузе (503/5xx), лимите (429), таймауте и обрыве сети.
   // Ошибки вроде 400/401 (неверный запрос/ключ) не повторяем — повтор их не вылечит.
   for (let attempt = 0; ; attempt++) {
@@ -255,6 +263,7 @@ async function callModel(prompt) {
       const u = data.usage || {};
       USAGE.in += u.prompt_tokens || 0;
       USAGE.out += u.completion_tokens || 0;
+      if (typeof u.cost === "number") USAGE.cost += u.cost;   // OpenRouter сам присылает точную цену запроса
       return (data.choices?.[0]?.message?.content || "").trim();
     } catch (e) {
       const timeout = e.name === "TimeoutError" || e.name === "AbortError";
@@ -655,7 +664,8 @@ function printCost() {
   console.log(`Провайдер/модель: ${PROVIDER} / ${PROVIDERS[PROVIDER].model}`);
   console.log(`Вызовов модели:   ${USAGE.calls}`);
   console.log(`Токены вход/выход: ${USAGE.in.toLocaleString()} / ${USAGE.out.toLocaleString()}`);
-  console.log(`Оценка стоимости партии: ${cost < 0.01 ? "< $0.01" : "$" + cost.toFixed(3)} ${PROVIDER === "mock" ? "(mock — без сети)" : "(по прикидочным ценам, без учёта кэша)"}`);
+  if (USAGE.cost > 0) console.log(`Стоимость партии: $${USAGE.cost.toFixed(4)} (точная, по счёту провайдера)`);
+  else console.log(`Оценка стоимости партии: ${cost < 0.01 ? "< $0.01" : "$" + cost.toFixed(3)} ${PROVIDER === "mock" ? "(mock — без сети)" : "(по прикидочным ценам, без учёта кэша)"}`);
 }
 
 async function gameLoop() {
