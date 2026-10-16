@@ -1,0 +1,21 @@
+[Unit]
+# Смотритель Мафии: держит игру запущенной в фоне,
+# поднимает после падения и после перезагрузки сервера.
+Description=Mafia game server
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=root
+WorkingDirectory=/root/mafia
+# Боевой режим: живой игрок, случайная роль (HUMAN_ROLE не задан), модель через OpenRouter
+Environment=HUMAN=1
+Environment=PROVIDER=openrouter
+Environment=PACING_MS=0
+ExecStart=/usr/bin/node mafia-server.js
+# упала — через 3 секунды поднимаем снова
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target
