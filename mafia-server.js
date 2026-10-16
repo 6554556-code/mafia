@@ -52,6 +52,7 @@ const BOLD = (s) => `\x1b[1m${s}\x1b[0m`;
 // ── ВЕБ-СЕРВЕР: живая труба сервер → браузер (SSE) ──────────────────────
 const express = require("express");
 const auth = require("./auth");
+const gamelog = require("./gamelog");   // журнал партий и слов игрока (для статистики теста)
 const PORT = process.env.PORT || 3000;
 // ── Многосессийность: у каждого игрока своя партия ──────────────────────
 const { AsyncLocalStorage } = require("node:async_hooks");
@@ -76,9 +77,22 @@ function broadcast(ev) {
 function awaitHuman(kind, payload = {}) {
   const S = CUR();
   return new Promise((resolve) => {
-    S.pending = { kind, resolve };
+    S.pending = { kind, payload, resolve };
     broadcast({ type: "your_turn", kind, ...payload });
   });
+}
+
+// Записать в журнал, что игрок сказал/сделал (только то, где есть слова или голос)
+function logHumanAction(S, pending, b) {
+  if (!S.gameId) return;
+  const day = S.G && S.G.day;
+  const text = typeof b.text === "string" ? b.text.trim() : "";
+  const k = pending.kind, pl = pending.payload || {};
+  if (k === "say") { if (text && !b.silent) gamelog.logMsg(S.gameId, S.userId, day, k, null, text); }
+  else if (k === "vote") gamelog.logMsg(S.gameId, S.userId, day, k, b.target, typeof b.reason === "string" ? b.reason.trim() : "");
+  else if (k === "whisper") { if (text && b.to && !b.skip) gamelog.logMsg(S.gameId, S.userId, day, k, b.to, text); }
+  else if (k === "whisper_reply") { if (text) gamelog.logMsg(S.gameId, S.userId, day, k, pl.from, text); }
+  else if (k === "doc_whisper" || k === "mafia_say") { if (text && !b.skip) gamelog.logMsg(S.gameId, S.userId, day, k, pl.to, text); }
 }
 
 function startWeb() {
@@ -161,6 +175,7 @@ function startWeb() {
     if (S && S.pending) {
       const p = S.pending; S.pending = null;
       als.run(S, () => broadcast({ type: "your_turn_done" }));
+      logHumanAction(S, p, req.body || {});
       p.resolve(req.body || {});
     }
     res.json({ ok: true });
@@ -714,6 +729,7 @@ async function gameLoop() {
   broadcast({ type: "reset" });
   broadcast({ type: "roster", day: G.day, players: G.players.map((p) => ({ name: p.name, c: p.c, av: p.av, role: p.role, alive: true, age: p.age, job: p.job, hobby: p.hobby, persona: p.persona })) });
   if (humanP) broadcast({ type: "you", name: humanP.name, role: humanP.role });
+  if (humanP && CUR().userId) CUR().gameId = gamelog.startGame(CUR().userId, humanP.name, humanP.role);   // журнал: партия началась
 
   console.log(BOLD(`\n════ МАФИЯ · провайдер: ${PROVIDER} · модель: ${PROVIDERS[PROVIDER].model} ════`));
   if (SHOW_SECRETS) {
@@ -732,6 +748,8 @@ async function gameLoop() {
     G.day++;
   }
   endGame();
+  const hp = G.players.find((p) => p.human);
+  if (hp) gamelog.finishGame(CUR().gameId, hp.role, G.winner, G.day, hp.alive);   // журнал: партия доиграна
   CUR().finishedAt = Date.now();   // партия доиграна — метка для будущей уборки памяти
   printCost();
 }
