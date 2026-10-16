@@ -1,0 +1,11 @@
+[Unit]
+Description=Daily Mafia stats to Telegram
+
+[Timer]
+# каждый день в 12:00 по Москве
+OnCalendar=*-*-* 12:00:00 Europe/Moscow
+# если сервер в 12:00 был выключен — отправить сразу после включения
+Persistent=true
+
+[Install]
+WantedBy=timers.target
