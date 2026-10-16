@@ -6,7 +6,7 @@
 <title>МАФИЯ · глаз бога</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Pixelify+Sans:wght@500;700&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Pixelify+Sans:wght@500;700&family=Rubik:wght@500;700&family=JetBrains+Mono:wght@700&display=swap" rel="stylesheet">
 <style>
   :root{
     --sage:#b7bdae;         /* фон-подложка */
@@ -23,6 +23,11 @@
     --act-bg:#e6e2d6; --act-br:#bdb8a6; --act-tx:#6a4a2a;
     --narr:#71818f;
     --good:#2f8f4e;
+    /* шрифт шапки/кнопок — меняется здесь одной строкой. Варианты:
+       "Pixelify Sans",ui-monospace,monospace   (А — пиксельный, как было)
+       "Rubik",sans-serif                       (Б — мягкий, читаемый)
+       "JetBrains Mono",ui-monospace,monospace  (В — как текст ленты) */
+    --ui-font:"JetBrains Mono",ui-monospace,monospace;
   }
   *{box-sizing:border-box}
   html,body{margin:0;height:100%}
@@ -37,8 +42,10 @@
   .machine{
     width:100%;max-width:680px;display:flex;flex-direction:column;gap:6px;
     height:calc(100vh - 20px);
+    height:calc(100dvh - 20px);   /* на телефоне учитывает адресную строку браузера */
   }
-  .pixel{font-family:"Pixelify Sans",ui-monospace,monospace;}
+  .pixel{font-family:var(--ui-font);}
+  .title.pixel{font-family:"Pixelify Sans",ui-monospace,monospace;}
 
   /* панель-каркас с «толстой» пиксельной рамкой */
   .panel{
@@ -59,13 +66,17 @@
     background:var(--paper-2);border:2px solid var(--line);
     font-size:14px;font-weight:600;white-space:nowrap;
   }
-  .chip.day{color:#a6791f}
+  .chip.day{color:#a6791f;flex-direction:column;justify-content:center;gap:0;line-height:1.15;text-align:center}
+  .chip.day .day-role{display:none;color:#b5352c;font-size:15px;font-weight:700}
+  .chip.day.has-role .day-role{display:block}
+  .chip.day.has-role .day-num{font-size:11px;font-weight:600}
   .chip.mode{margin-left:auto;color:#3d3d3d}
   .chip .eye{font-size:15px}
   /* ── Глаз бога: выключатель секретов ─────────── */
   .chip.mode{cursor:pointer;user-select:none;opacity:.55;transition:opacity .15s}
   .chip.mode.on{opacity:1;color:#b5352c}
   .chip.mode.on .eye{filter:drop-shadow(0 0 2px #b5352c88)}
+  .chip.mode.on{background:var(--mafia-bg);border-color:var(--mafia-tx)}
   body.blind .plaque.secret,
   body.blind div.act.secret{display:none}
   body.blind .role.secret{visibility:hidden}
@@ -151,7 +162,7 @@
   .plaque{border:2px solid var(--line);padding:9px 11px;font-size:14px;line-height:1.5}
   .plaque .who{font-weight:700;margin-bottom:3px;display:flex;align-items:center;gap:7px}
   .plaque .who .tag{
-    font-family:"Pixelify Sans",monospace;font-size:11px;font-weight:700;
+    font-family:var(--ui-font);font-size:11px;font-weight:700;
     padding:1px 6px;border:2px solid;border-radius:2px;
   }
   .say{background:var(--paper)}
@@ -184,8 +195,6 @@
   .conn.live{color:var(--good)}
   .conn.demo{color:#a6791f}
 
-  .chip.you{color:#2a6aa0}
-  .chip.you b{color:#b5352c;font-weight:700}
 
   /* ── панель хода игрока (появляется, когда твой ход) ── */
   .inputbar{display:none;padding:8px;flex-direction:column;gap:6px}
@@ -197,7 +206,7 @@
     padding:9px 11px;border:2px solid var(--line);background:#fff;color:var(--ink);
   }
   .inputrow input:focus{outline:none;box-shadow:inset 0 0 0 2px var(--think-br)}
-  .btn{font-family:"Pixelify Sans",monospace;font-weight:700;font-size:14px;
+  .btn{font-family:var(--ui-font);font-weight:700;font-size:14px;
     padding:9px 16px;border:2px solid var(--line);cursor:pointer;white-space:nowrap}
   .btn.say{background:#f3d24e;color:#3a2e00}
   .btn.skip{background:var(--paper-2);color:#3d3d3d}
@@ -228,6 +237,44 @@
   .votebtn.suggested{background:var(--mafia-bg);border-color:var(--mafia-tx);color:var(--mafia-tx)}
   .votebtn.off{opacity:.35;pointer-events:none}
 
+  /* ── ТЕЛЕФОН (узкий или лёжа): максимум места чату ─────── */
+  @media (max-width:600px), (max-height:500px){
+    body{padding:4px}
+    .machine{height:calc(100vh - 8px);height:calc(100dvh - 8px);gap:4px}
+    .panel{border-width:2px;box-shadow:2px 2px 0 rgba(44,44,40,.18)}
+    /* шапка в одну строку: [МАФИЯ][роль/день] … [👁][🚪][⚙️] */
+    .topbar{gap:4px;padding:4px}
+    .title{font-size:18px;padding:3px 8px}
+    .chip{padding:3px 8px;font-size:13px}
+    .chip.day .day-role{font-size:14px}
+    .chip.mode .eye-txt{display:none}
+    .chip.mode,.chip.door,.chip.gear{min-width:36px;padding:3px 6px;justify-content:center}
+    /* стол: 8 в ряд (при 16 игроках — 2 ряда), компактно */
+    .seatsWrap{padding:3px}
+    .seats{gap:2px}
+    .ava{font-size:18px}
+    .seat .nm{font-size:10px;margin-top:2px}
+    .seat .role{font-size:9px}
+    .bar{height:3px;margin-top:2px}
+    .summary{font-size:11px;padding:3px 6px;gap:1px 8px}
+    .feedWrap{padding:3px}
+    .feed{padding:2px 3px 2px 2px;gap:5px}
+    .plaque{font-size:14px;padding:6px 8px}
+    .inputbar{padding:6px}
+    /* плашка «эфир» наезжает на шапку — на телефоне показываем её, только пока связи нет */
+    .conn.live{display:none}
+    /* iPhone увеличивает страницу при фокусе на поле с шрифтом < 16px — даём 16 */
+    .inputrow input,#voteReason,#whisperText,#replyText,.modal-card input{font-size:16px}
+    .btn{padding:8px 12px}
+  }
+  /* телефон лёжа: экран низкий — лица в узкую полоску, чтобы чату осталось место */
+  @media (max-height:500px){
+    .machine{max-width:none}   /* лёжа экран широкий — занимаем его целиком */
+    .seats{grid-template-columns:repeat(auto-fit,minmax(46px,1fr))}   /* и сажаем до 16 игроков в один ряд */
+    .ava{aspect-ratio:auto;height:34px}
+    .ava img{object-position:center 25%}
+    .seat .nm{margin-top:1px}
+  }
   .feed::-webkit-scrollbar{width:12px}
   .feed::-webkit-scrollbar-thumb{background:var(--paper-2);border:2px solid var(--line)}
 </style>
@@ -238,9 +285,8 @@
 
     <div class="panel topbar">
       <div class="title pixel">МАФИЯ</div>
-      <div class="chip day pixel"><span>☀</span><span id="dayLabel">День 1</span></div>
-      <div class="chip you pixel" id="youChip" style="display:none">Вы: <b id="youRole"></b></div>
-      <div class="chip mode pixel" id="eyeBtn" onclick="document.body.classList.toggle('blind');this.classList.toggle('on')"><span class="eye">👁</span><span>Глаз бога</span></div>
+      <div class="chip day pixel" id="dayChip" title="Твоя роль и день"><span class="day-role" id="youRole"></span><span class="day-num">☀ <span id="dayLabel">День 1</span></span></div>
+      <div class="chip mode pixel" id="eyeBtn" onclick="toggleEye()"><span class="eye">👁</span><span class="eye-txt">Глаз бога</span></div>
       <div class="chip door pixel" id="logoutBtn" title="Выход" onclick="fetch('/logout',{method:'POST'}).finally(()=>location.href='/auth.html')">🚪</div>
       <div class="chip gear pixel" id="gearBtn" title="Настройки" onclick="openSettings()">⚙️</div>
     </div>
@@ -323,7 +369,13 @@ const replyMode=document.getElementById('replyMode');
 const replyText=document.getElementById('replyText');
 const replyBtns=document.getElementById('replyBtns');
 const replyFrom=document.getElementById('replyFrom');
-const youChip=document.getElementById('youChip');
+const dayChip=document.getElementById('dayChip');
+// Глаз бога: ОДНО состояние, из него — и кнопка, и видимость секретов (не могут разойтись)
+function toggleEye(){
+  const on=!document.getElementById('eyeBtn').classList.contains('on');
+  document.getElementById('eyeBtn').classList.toggle('on',on);
+  document.body.classList.toggle('blind',!on);
+}
 const youRoleEl=document.getElementById('youRole');
 
 let players=[];            // [{name,c,role,alive}]
@@ -508,9 +560,9 @@ const esc=s=>String(s).replace(/[&<>]/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[
 function handle(e){
   switch(e.type){
     case "reset":
-      players=[];feed.innerHTML="";render();dayLabel.textContent="День 1";hideInput();break;
+      players=[];feed.innerHTML="";render();dayLabel.textContent="День 1";dayChip.classList.remove('has-role');hideInput();break;
     case "you":
-    myName=e.name; youRoleEl.textContent=roleRu[e.role]||e.role; youChip.style.display="";render();break;
+    myName=e.name; youRoleEl.textContent=roleRu[e.role]||e.role; dayChip.classList.add('has-role');render();break;
     case "your_turn":
       showInput(e);break;
     case "your_turn_done":
@@ -675,24 +727,24 @@ function startDemo(){
   const script=[
     {type:"reset"},
     {type:"roster",day:1,players:[
-      {name:"МируМир",c:80,role:"mafia"},{name:"СеСтруХа",c:211,role:"civilian"},
-      {name:"Тень",c:145,role:"mafia"},{name:"ПрофеССор",c:183,role:"komissar"},
-      {name:"КабанЪ",c:179,role:"maniac"},{name:"Фурия",c:211,role:"civilian"},
+      {name:"Мирумир",c:80,role:"mafia"},{name:"Сеструха",c:211,role:"civilian"},
+      {name:"Тень",c:145,role:"mafia"},{name:"Профессор",c:183,role:"komissar"},
+      {name:"Кабан",c:179,role:"maniac"},{name:"Фурия",c:211,role:"civilian"},
       {name:"Кекс228",c:114,role:"doctor"},{name:"Трубач",c:111,role:"civilian"}]},
     {type:"narrator",text:"Ночь 1. Деревня засыпает."},
-    {type:"pm",channel:"mafia",from:"МируМир",text:"Тень, предлагаю убить Фурию — активные всегда опасны. Днём держимся порознь, изображаем мирных."},
+    {type:"pm",channel:"mafia",from:"Мирумир",text:"Тень, предлагаю убить Фурию — активные всегда опасны. Днём держимся порознь, изображаем мирных."},
     {type:"pm",channel:"mafia",from:"Тень",text:"Согласна. Днём я первая скажу, что она давила слишком уверенно."},
     {type:"act",text:"🔪 мафия целится в: Трубач"},
     {type:"act",text:"🩺 доктор (Кекс228) лечит: Кекс228"},
-    {type:"act",text:"🔍 комиссар (ПрофеССор) проверяет: Тень → МАФИЯ"},
+    {type:"act",text:"🔍 комиссар (Профессор) проверяет: Тень → МАФИЯ"},
     {type:"day",day:1},
     {type:"narrator",text:"День 1."},
     {type:"result",text:"Ночью убили Трубач. Трубач — Мирный."},
     {type:"dead",name:"Трубач"},
     {type:"narrator",text:"круг обсуждения 1/2"},
-    {type:"think",name:"КабанЪ",text:"Трубач убит — он мирный. Один труп, всё ровно, доктор явно кого-то прикрыл. Тяну игру, я маньяк."},
-    {type:"say",name:"КабанЪ",c:179,text:"Ну чё, кто-то ж мочканул Трубача. Я спал как убитый, зуб даю."},
-    {type:"say",name:"ПрофеССор",c:183,text:"Тень, ты подозрительно тихо себя ведёшь. Присмотримся к тебе."},
+    {type:"think",name:"Кабан",text:"Трубач убит — он мирный. Один труп, всё ровно, доктор явно кого-то прикрыл. Тяну игру, я маньяк."},
+    {type:"say",name:"Кабан",c:179,text:"Ну чё, кто-то ж мочканул Трубача. Я спал как убитый, зуб даю."},
+    {type:"say",name:"Профессор",c:183,text:"Тень, ты подозрительно тихо себя ведёшь. Присмотримся к тебе."},
     {type:"vote",voter:"Фурия",target:"Тень",reason:"молчит весь день"},
     {type:"gameover",text:"🏆 ДЕРЕВНЯ ПОБЕДИЛА"},
   ];
