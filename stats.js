@@ -128,9 +128,12 @@ const TG_API = process.env.TG_API || "https://api.telegram.org";
 async function tg(method, body) {
   const token = process.env.TG_BOT_TOKEN;
   if (!token) throw new Error("Нет TG_BOT_TOKEN в ~/.env");
-  const res = await fetch(`${TG_API}/bot${token}/${method}`, { method: "POST", body, signal: AbortSignal.timeout(30000) });
-  const j = await res.json().catch(() => ({}));
-  if (!j.ok) throw new Error(`Telegram ${method}: ${j.description || res.status}`);
+  // без тела — простой GET (пустую «посылку» Telegram отбивает ошибкой 400)
+  const opts = body ? { method: "POST", body } : { method: "GET" };
+  const res = await fetch(`${TG_API}/bot${token}/${method}`, { ...opts, signal: AbortSignal.timeout(30000) });
+  const raw = await res.text();
+  let j = {}; try { j = JSON.parse(raw); } catch (_) {}
+  if (!j.ok) throw new Error(`Telegram ${method}: ${j.description || res.status + " " + raw.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim().slice(0, 120)}`);
   return j.result;
 }
 async function sendTelegram(data) {
@@ -146,10 +149,10 @@ async function sendTelegram(data) {
     f.append("document", new Blob([content], { type: "text/csv" }), name);
     await tg("sendDocument", f);
   }
-  console.log(`✓ Отправлено в Telegram: сводка + 2 файла (${data.games.length} партий, ${data.msgs.length} реплик)`);
+  console.log(`✓ Отправлено в Telegram: сводка + 2 файла (партий: ${data.games.length}, реплик: ${data.msgs.length})`);
 }
 async function chatId() {
-  const ups = await tg("getUpdates", new FormData());
+  const ups = await tg("getUpdates");
   const chats = new Map();
   for (const u of ups) { const c = (u.message || u.channel_post || {}).chat; if (c) chats.set(c.id, c.first_name || c.title || c.username || ""); }
   if (!chats.size) { console.log("Боту пока никто не писал. Напиши ему в Telegram «привет» и запусти команду ещё раз."); return; }
