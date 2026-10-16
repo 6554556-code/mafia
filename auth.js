@@ -30,6 +30,12 @@ db.exec(`
 
 // Миграция: колонка avatar. База НЕ пересоздаётся — ALTER тихо игнорится, если колонка уже есть.
 try { db.exec("ALTER TABLE users ADD COLUMN avatar TEXT"); } catch (_) {}
+// Миграция: «о себе» (возраст / кто по жизни / увлечения). Всё необязательно, пустое = NULL.
+for (const col of ["bio_age INTEGER", "bio_job TEXT", "bio_hobby TEXT"]) {
+  try { db.exec(`ALTER TABLE users ADD COLUMN ${col}`); } catch (_) {}
+}
+// Какие поля пользователя отдаём наружу (пароль и прочее — никогда)
+const USER_COLS = "id, email, name, avatar, bio_age, bio_job, bio_hobby";
 
 // Список .png в папке avatars/<sub>, в виде "<sub>/файл.png"
 function listDir(sub) {
@@ -107,7 +113,7 @@ function startSession(userId) {
   const token = crypto.randomBytes(32).toString("hex");
   db.prepare("INSERT INTO sessions (token, user_id, created) VALUES (?, ?, ?)")
     .run(token, userId, Date.now());
-  const user = db.prepare("SELECT id, email, name, avatar FROM users WHERE id = ?").get(userId);
+  const user = db.prepare(`SELECT ${USER_COLS} FROM users WHERE id = ?`).get(userId);
   return { token, user };
 }
 function logout(token) {
@@ -117,7 +123,7 @@ function userByToken(token) {
   if (!token) return null;
   const s = db.prepare("SELECT user_id FROM sessions WHERE token = ?").get(token);
   if (!s) return null;
-  return db.prepare("SELECT id, email, name, avatar FROM users WHERE id = ?").get(s.user_id) || null;
+  return db.prepare(`SELECT ${USER_COLS} FROM users WHERE id = ?`).get(s.user_id) || null;
 }
 
 // ── Достаём токен сессии из cookie входящего запроса ──
@@ -139,7 +145,7 @@ function rename(userId, newName) {
   const taken = db.prepare("SELECT id FROM users WHERE name_lower = ? AND id != ?").get(newLower, userId);
   if (taken) return { error: "Этот ник уже занят" };
   db.prepare("UPDATE users SET name = ?, name_lower = ? WHERE id = ?").run(newName, newLower, userId);
-  return { user: db.prepare("SELECT id, email, name, avatar FROM users WHERE id = ?").get(userId) };
+  return { user: db.prepare(`SELECT ${USER_COLS} FROM users WHERE id = ?`).get(userId) };
 }
 
 // ── Аватары ──
@@ -150,9 +156,30 @@ function setAvatar(userId, file) {
   if (!/^(male|female|neutral)\/[A-Za-z0-9_.-]+\.png$/.test(file)) return { error: "Недопустимое лицо" };
   if (!fs.existsSync(path.join(AVA_DIR, file))) return { error: "Такого лица нет" };
   db.prepare("UPDATE users SET avatar = ? WHERE id = ?").run(file, userId);
-  return { user: db.prepare("SELECT id, email, name, avatar FROM users WHERE id = ?").get(userId) };
+  return { user: db.prepare(`SELECT ${USER_COLS} FROM users WHERE id = ?`).get(userId) };
 }
+// ── «О себе»: три необязательных поля ──
+// Текст попадает в промпт ИИ, поэтому чистим строго: одна строка, без служебных символов,
+// без скобок/кавычек (ими можно «закрыть» досье и дописать свои указания), до 40 символов.
+function cleanBio(v) {
+  return String(v ?? "").replace(/[\p{C}<>{}\[\]`"«»\\]/gu, " ").replace(/\s+/g, " ").trim();
+}
+function setBio(userId, bio) {
+  bio = bio || {};
+  let age = String(bio.age ?? "").trim();
+  if (age === "") age = null;
+  else {
+    if (!/^\d{1,2}$/.test(age) || +age < 10 || +age > 99) return { error: "Возраст — число от 10 до 99 (или оставь пустым)" };
+    age = +age;
+  }
+  const job = cleanBio(bio.job), hobby = cleanBio(bio.hobby);
+  if (job.length > 40 || hobby.length > 40) return { error: "Не больше 40 символов в поле" };
+  db.prepare("UPDATE users SET bio_age = ?, bio_job = ?, bio_hobby = ? WHERE id = ?")
+    .run(age, job || null, hobby || null, userId);
+  return { user: db.prepare(`SELECT ${USER_COLS} FROM users WHERE id = ?`).get(userId) };
+}
+
 // Лица для сетки выбора: две группы — мужские и женские (свободные, без ИИшных из characters)
 function listAvatars() { return { male: listDir("male"), female: listDir("female") }; }
 
-module.exports = { register, login, logout, userByToken, tokenFromReq, rename, setAvatar, listAvatars };
+module.exports = { register, login, logout, userByToken, tokenFromReq, rename, setAvatar, listAvatars, setBio };
