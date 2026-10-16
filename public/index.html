@@ -89,6 +89,10 @@
   .setmsg.ok{color:var(--good)}
   .soon{margin-top:14px;padding-top:12px;border-top:1px dashed var(--ink-soft);font-size:12px;color:var(--ink-soft);line-height:1.8}
   .ava-section{margin-top:12px}
+  .bio-section{margin-top:14px;padding-top:10px;border-top:1px dashed var(--ink-soft)}
+  .bio-row{display:flex;gap:6px}
+  .bio-row .bio-age{width:84px;flex:none}
+  .modal-card{max-height:calc(100vh - 28px);overflow-y:auto}
   .ava-group-title{font-size:11px;color:var(--ink-soft);margin:8px 0 4px;letter-spacing:.5px}
   .ava-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:6px}
   .ava-opt{aspect-ratio:5/4;border:2px solid var(--line);background:#cfcabc;cursor:pointer;overflow:hidden;padding:0}
@@ -561,19 +565,24 @@ function showBio(name){
   document.getElementById('bioName').textContent=p.name;
   const ava=document.getElementById('bioAva');
   ava.innerHTML=p.av?`<img src="avatars/${p.av}" alt="" style="width:100%;height:100%;object-fit:cover;image-rendering:pixelated">`:'';
-  const rows=[];
-  if(p.age) rows.push(`<b>Возраст:</b> ${p.age}`);
-  if(p.job) rows.push(`<b>Кто по жизни:</b> ${p.job}`);
-  if(p.hobby) rows.push(`<b>Увлечения:</b> ${p.hobby}`);
+  // пустое поле — прочерк; всё экранируем (досье живого игрока пишет он сам)
+  const v=x=>(x===null||x===undefined||x==='')?'—':esc(x);
+  const rows=[`<b>Возраст:</b> ${v(p.age)}`,`<b>Кто по жизни:</b> ${v(p.job)}`,`<b>Увлечения:</b> ${v(p.hobby)}`];
   if(p.persona) rows.push(`<b>Характер:</b> ${esc(p.persona)}`);
-  document.getElementById('bioInfo').innerHTML=rows.join('<br>')||'Пока ничего не известно.';
+  document.getElementById('bioInfo').innerHTML=rows.join('<br>');
   document.getElementById('bioModal').style.display='flex';
 }
 function closeBio(){ document.getElementById('bioModal').style.display='none'; }
 function openSettings(){
   const msg=document.getElementById('setMsg'); msg.className='setmsg'; msg.textContent='';
+  const bmsg=document.getElementById('bioMsg'); bmsg.className='setmsg'; bmsg.textContent='';
   document.getElementById('settings').style.display='flex';
-  fetch('/me').then(r=>r.json()).then(d=>{ if(d&&d.user){ document.getElementById('nickInput').value=d.user.name; loadAvatars(d.user.avatar); } }).catch(()=>{});
+  fetch('/me').then(r=>r.json()).then(d=>{ if(d&&d.user){ const u=d.user;
+    document.getElementById('nickInput').value=u.name;
+    document.getElementById('bioAge').value=u.bio_age??'';
+    document.getElementById('bioJob').value=u.bio_job??'';
+    document.getElementById('bioHobby').value=u.bio_hobby??'';
+    loadAvatars(u.avatar); } }).catch(()=>{});
   document.getElementById('nickInput').focus();
 }
 async function loadAvatars(current){
@@ -617,6 +626,17 @@ async function saveNick(){
     const d=await res.json().catch(()=>({}));
     if(!res.ok||d.error){ msg.className='setmsg err'; msg.textContent=d.error||'Не удалось сохранить'; return; }
     msg.className='setmsg ok'; msg.textContent='Ник сохранён — появится со следующей партии ✓';
+  }catch(e){ msg.className='setmsg err'; msg.textContent='Сервер не отвечает'; }
+}
+async function saveBio(){
+  const msg=document.getElementById('bioMsg');
+  const body={age:document.getElementById('bioAge').value.trim(),job:document.getElementById('bioJob').value.trim(),hobby:document.getElementById('bioHobby').value.trim()};
+  msg.className='setmsg'; msg.textContent='Сохраняю…';
+  try{
+    const res=await fetch('/bio',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+    const d=await res.json().catch(()=>({}));
+    if(!res.ok||d.error){ msg.className='setmsg err'; msg.textContent=d.error||'Не удалось сохранить'; return; }
+    msg.className='setmsg ok'; msg.textContent='«О себе» сохранено — появится со следующей партии ✓';
   }catch(e){ msg.className='setmsg err'; msg.textContent='Сервер не отвечает'; }
 }
 document.addEventListener('keydown',e=>{ if(e.key==='Escape'){ closeSettings(); closeBio(); } });
@@ -699,6 +719,16 @@ connect();
     <input id="nickInput" maxlength="16" autocomplete="off">
     <button class="save" onclick="saveNick()">Сохранить ник</button>
     <div class="setmsg" id="setMsg"></div>
+    <div class="bio-section">
+      <label>О себе (по желанию — увидят все за столом)</label>
+      <div class="bio-row">
+        <input id="bioAge" class="bio-age" type="number" min="10" max="99" placeholder="Возраст" autocomplete="off">
+        <input id="bioJob" maxlength="40" placeholder="Кто по жизни" autocomplete="off">
+      </div>
+      <input id="bioHobby" maxlength="40" placeholder="Увлечения" autocomplete="off" style="margin-top:6px">
+      <button class="save" onclick="saveBio()">Сохранить «о себе»</button>
+      <div class="setmsg" id="bioMsg"></div>
+    </div>
     <div class="ava-section">
       <label>Выбери своё лицо 👇</label>
       <div id="avaGrid"></div>
