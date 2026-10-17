@@ -77,6 +77,14 @@
   .chip.mode.on{opacity:1;color:#b5352c}
   .chip.mode.on .eye{filter:drop-shadow(0 0 2px #b5352c88)}
   .chip.mode.on{background:var(--mafia-bg);border-color:var(--mafia-tx)}
+  .chip.mode{position:relative}
+  .chip.mode.locked::after{content:"🔒";position:absolute;right:-6px;top:-8px;font-size:12px}
+  .chip.mode.fresh{animation:eyepulse 1.2s ease-in-out 3}
+  @keyframes eyepulse{0%,100%{box-shadow:0 0 0 0 #b5352c00}50%{box-shadow:0 0 0 5px #b5352c66;opacity:1}}
+  .toast{position:fixed;left:12px;right:12px;margin:0 auto;width:fit-content;bottom:110px;z-index:200;max-width:420px;
+    background:var(--ink);color:var(--paper);border:2px solid var(--line);padding:10px 14px;font-size:14px;line-height:1.45;
+    box-shadow:4px 4px 0 rgba(44,44,40,.25);opacity:0;pointer-events:none;transition:opacity .2s}
+  .toast.on{opacity:1}
   body.blind .plaque.secret,
   body.blind div.act.secret{display:none}
   body.blind .role.secret{visibility:hidden}
@@ -281,12 +289,13 @@
 </head>
 <body class="blind">
   <div class="conn" id="conn">подключение…</div>
+  <div class="toast" id="toast"></div>
   <div class="machine">
 
     <div class="panel topbar">
       <div class="title pixel">МАФИЯ</div>
       <div class="chip day pixel" id="dayChip" title="Твоя роль и день"><span class="day-role" id="youRole"></span><span class="day-num">☀ <span id="dayLabel">День 1</span></span></div>
-      <div class="chip mode pixel" id="eyeBtn" onclick="toggleEye()"><span class="eye">👁</span><span class="eye-txt">Глаз бога</span></div>
+      <div class="chip mode pixel locked" id="eyeBtn" onclick="toggleEye()" title="Откроется, когда выбудешь из игры · сразу — в Премиум"><span class="eye">👁</span><span class="eye-txt">Глаз бога</span></div>
       <div class="chip door pixel" id="logoutBtn" title="Выход" onclick="fetch('/logout',{method:'POST'}).finally(()=>location.href='/auth.html')">🚪</div>
       <div class="chip gear pixel" id="gearBtn" title="Настройки" onclick="openSettings()">⚙️</div>
     </div>
@@ -370,15 +379,31 @@ const replyText=document.getElementById('replyText');
 const replyBtns=document.getElementById('replyBtns');
 const replyFrom=document.getElementById('replyFrom');
 const dayChip=document.getElementById('dayChip');
-// Глаз бога: ОДНО состояние, из него — и кнопка, и видимость секретов (не могут разойтись)
+// Глаз бога: ОДНО состояние, из него — и кнопка, и видимость секретов (не могут разойтись).
+// Разрешение даёт сервер: бесплатно — после выбывания из игры или в конце партии; с премиумом — сразу.
+let eyeAllowed=false;
+function setEyeAllowed(ok){
+  eyeAllowed=ok;
+  const b=document.getElementById('eyeBtn');
+  b.classList.toggle('locked',!ok);
+  b.title = ok ? "Глаз бога: показать роли, мысли и шёпот" : "Откроется, когда выбудешь из игры · сразу — в Премиум";
+  if(!ok){ b.classList.remove('on'); document.body.classList.add('blind'); }
+}
 function toggleEye(){
+  if(!eyeAllowed){ toast("👁 Глаз бога откроется, когда ты выбудешь из игры.<br>Видеть всё с первой минуты — в <b>Премиум</b> (скоро)."); return; }
   const on=!document.getElementById('eyeBtn').classList.contains('on');
   document.getElementById('eyeBtn').classList.toggle('on',on);
   document.body.classList.toggle('blind',!on);
 }
+let toastTimer=null;
+function toast(html,ms=4500){
+  const t=document.getElementById('toast'); t.innerHTML=html; t.classList.add('on');
+  clearTimeout(toastTimer); toastTimer=setTimeout(()=>t.classList.remove('on'),ms);
+}
 const youRoleEl=document.getElementById('youRole');
 
 let players=[];            // [{name,c,role,alive}]
+let tableSetup=null;       // состав стола {mafia:2,...} — публичен; живых по ролям считаем без подсматривания
 let myName=null;           // имя человека за столом
 const roleRu={mafia:"Мафия",maniac:"Маньяк",komissar:"Комиссар",doctor:"Доктор",civilian:"Мирный"};
 const colorOf=n=>{const p=players.find(x=>x.name===n);return p?deep(p.c):"#333";};
@@ -533,7 +558,9 @@ function render(){
 function renderSummary(){
   if(!players.length){summaryEl.innerHTML="<span>Партия ещё не началась</span>";return;}
   const alive=players.filter(p=>p.alive);
-  const c=r=>alive.filter(p=>p.role===r).length;
+  // живых в роли r = было за столом − вскрытые выбывшие (роли живых при закрытом глазе неизвестны)
+  const c=r=>tableSetup ? (tableSetup[r]||0)-players.filter(p=>!p.alive&&p.role===r).length
+                        : alive.filter(p=>p.role===r).length;
   // роли-числа: мафия/маньяк — красным (враги), считаем живых. Новую роль добавить сюда одной строкой.
   const counts=[["Мафия","mafia","bad"],["Маньяк","maniac","bad"]];
   // роли-одиночки: показываем ✓ (кто-то жив) / ✗ (выбыл).
@@ -561,6 +588,15 @@ function handle(e){
   switch(e.type){
     case "reset":
       players=[];feed.innerHTML="";render();dayLabel.textContent="День 1";dayChip.classList.remove('has-role');hideInput();break;
+    case "eye_state":
+      setEyeAllowed(!!e.open);break;
+    case "eye_unlocked":
+      // сервер открыл глаз: перечитываем партию — теперь придёт и всё скрытое, на своих местах в ленте
+      setEyeAllowed(true);
+      toast(e.why==="end" ? "Партия окончена — 👁 Глаз бога открыт: смотри, кто кем был и что думал."
+                          : "Ты вне игры — 👁 Глаз бога открыт: смотри, кто кем был и что думал.", 6000);
+      document.getElementById('eyeBtn').classList.add('fresh');
+      reconnect();break;
     case "you":
     myName=e.name; youRoleEl.textContent=roleRu[e.role]||e.role; dayChip.classList.add('has-role');render();break;
     case "your_turn":
@@ -572,13 +608,14 @@ function handle(e){
     case "note":
       add(el("narr",esc(e.text)));break;
     case "roster":
+    tableSetup=e.setup||null;
     players=e.players.map(p=>({name:p.name,c:p.c,av:p.av,role:p.role,alive:p.alive!==false,age:p.age,job:p.job,hobby:p.hobby,persona:p.persona}));
       if(e.day)dayLabel.textContent="День "+e.day;
       render();break;
     case "day":
       dayLabel.textContent="День "+e.day;break;
     case "dead":{
-      const p=players.find(x=>x.name===e.name);if(p)p.alive=false;render();break;}
+      const p=players.find(x=>x.name===e.name);if(p){p.alive=false;if(e.role)p.role=e.role;}render();break;}
     case "narrator":
       add(el("narr",esc(e.text)));break;
     case "say":{
@@ -708,9 +745,9 @@ function showReplay(){
 }
 
 // ── связь с сервером (SSE) + демо-заглушка, если сервера ещё нет ─────────────
-let gotReal=false, demoTimer=null;
+let gotReal=false, demoTimer=null, src=null;
+function reconnect(){ try{ if(src) src.close(); }catch(_){} hideInput(); connect(); }
 function connect(){
-  let src;
   try{ src=new EventSource('/events'); }catch(_){ return startDemo(); }
   src.onmessage=ev=>{
     if(!gotReal){gotReal=true;stopDemo();connEl.textContent="● эфир";connEl.className="conn live";}
