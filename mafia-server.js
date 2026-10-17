@@ -98,11 +98,14 @@ function broadcast(ev) {
   }
 }
 
+function abortError() { const e = new Error("партия брошена"); e.aborted = true; return e; }
+
 // поставить ТЕКУЩУЮ партию на паузу и ждать ответа её человека из браузера
 function awaitHuman(kind, payload = {}) {
   const S = CUR();
-  return new Promise((resolve) => {
-    S.pending = { kind, payload, resolve };
+  if (S.aborted) return Promise.reject(abortError());
+  return new Promise((resolve, reject) => {
+    S.pending = { kind, payload, resolve, reject };
     broadcast({ type: "your_turn", kind, ...payload });
   });
 }
@@ -120,8 +123,17 @@ function logHumanAction(S, pending, b) {
   else if (k === "doc_whisper" || k === "mafia_say") { if (text && !b.skip) gamelog.logMsg(S.gameId, S.userId, day, k, pl.to, text); }
 }
 
+// ── Защита от злоупотреблений: считаем события по адресу за скользящее окно ──
+const hits = new Map();   // "ключ:адрес" → [метки времени]
+function recent(key, windowMs) { const now = Date.now(); const a = (hits.get(key) || []).filter((t) => now - t < windowMs); hits.set(key, a); return a; }
+function hit(key) { const a = hits.get(key) || []; a.push(Date.now()); hits.set(key, a); }
+setInterval(() => { const now = Date.now(); for (const [k, a] of hits) if (!a.length || now - a[a.length - 1] > 3600e3) hits.delete(k); }, 600e3);
+const REG_MAX = 10, REG_WIN = 3600e3;        // успешных регистраций с одного адреса в час (с запасом: у мобильных операторов общий адрес на многих)
+const LOGIN_FAIL_MAX = 20, LOGIN_WIN = 900e3; // неудачных входов с одного адреса за 15 минут (защита от подбора паролей)
+
 function startWeb() {
   const app = express();
+  app.set("trust proxy", "loopback");   // за «привратником» (Caddy) на этом же сервере берём настоящий адрес игрока
   app.use(express.json());
   app.get("/", (req, res) => {
     if (!auth.userByToken(auth.tokenFromReq(req))) return res.redirect("/auth.html");
@@ -130,16 +142,21 @@ function startWeb() {
   app.use(express.static(require("path").join(__dirname, "public")));
 
   app.post("/register", (req, res) => {
+    const k = "reg:" + req.ip;
+    if (recent(k, REG_WIN).length >= REG_MAX) return res.status(429).json({ error: "Слишком много регистраций с этого адреса. Попробуй через час." });
     const { email, password, name } = req.body || {};
     const r = auth.register(email, password, name);
     if (r.error) return res.status(400).json({ error: r.error });
+    hit(k);
     res.cookie("sid", r.token, { httpOnly: true, sameSite: "lax", path: "/", maxAge: 30 * 24 * 3600 * 1000 });
     res.json({ user: r.user });
   });
   app.post("/login", (req, res) => {
+    const k = "login:" + req.ip;
+    if (recent(k, LOGIN_WIN).length >= LOGIN_FAIL_MAX) return res.status(429).json({ error: "Слишком много неудачных попыток входа. Подожди 15 минут." });
     const { email, password } = req.body || {};
     const r = auth.login(email, password);
-    if (r.error) return res.status(400).json({ error: r.error });
+    if (r.error) { hit(k); return res.status(400).json({ error: r.error }); }
     res.cookie("sid", r.token, { httpOnly: true, sameSite: "lax", path: "/", maxAge: 30 * 24 * 3600 * 1000 });
     res.json({ user: r.user });
   });
@@ -217,10 +234,15 @@ function startWeb() {
     res.write(`data: ${JSON.stringify({ type: "eye_state", open: eyeOpen(S), premium: !!S.premium })}\n\n`);   // можно ли глаз
     S.eventBuffer.forEach((ev) => sendTo(S, res, ev)); // проигрываем уже случившееся (секреты — только если глаз открыт)
     S.clients.push(res);
-    req.on("close", () => { S.clients = S.clients.filter((c) => c !== res); });
+    S.emptySince = null;                              // кто-то смотрит партию
+    req.on("close", () => {
+      S.clients = S.clients.filter((c) => c !== res);
+      if (!S.clients.length) S.emptySince = Date.now();   // все вкладки закрыты — засекаем время
+    });
     if (fresh) {                                     // новая партия — крутим её в собственном «ярлычке»
       als.run(S, () => {
         gameLoop().catch((e) => {
+          if (e && e.aborted) return;                   // партию бросили и вымели — это не ошибка
           console.error("ФАТАЛЬНО:", e);
           broadcast({ type: "result", text: "Ошибка сервера: " + e.message, red: true });
         });
@@ -288,21 +310,39 @@ const plurality = (names) => { const t = {}; names.forEach((n) => (t[n] = (t[n] 
 let USAGE = { in: 0, out: 0, calls: 0, cost: 0 };
 
 // ── Вызов модели ────────────────────────────────────────────────────────
+// Запасной провайдер: если основной не ответил после всех повторов (или кончились деньги/сломан ключ) —
+// идём в запасной. По умолчанию для OpenRouter это DeepSeek напрямую, если его ключ лежит в .env.
+const FALLBACK = process.env.FALLBACK ?? (PROVIDER === "openrouter" ? "deepseek" : "");
 async function callModel(prompt) {
+  const S = CUR();
+  if (S && S.aborted) throw new Error("партия брошена — модель не зовём");   // не тратим деньги на пустой зал
   USAGE.calls++;
   if (PROVIDER === "mock") return mockModel(prompt);
-  const cfg = PROVIDERS[PROVIDER];
+  try {
+    return await callProvider(PROVIDER, prompt);
+  } catch (e) {
+    const fb = PROVIDERS[FALLBACK];
+    if (!fb || FALLBACK === PROVIDER || !process.env[fb.keyEnv]) throw e;
+    console.log(DIM(`   ↪ ${PROVIDER} не справился (${String(e.message).slice(0, 60)}) — иду запасным путём: ${FALLBACK}`));
+    return await callProvider(FALLBACK, prompt);
+  }
+}
+
+async function callProvider(name, prompt) {
+  const cfg = PROVIDERS[name];
   const key = process.env[cfg.keyEnv];
   if (!key) throw new Error(`Нет ключа: задай переменную окружения ${cfg.keyEnv}`);
   // «Думание» выключаем (иначе жжёт токены и тянет время). У каждого провайдера свой выключатель.
   // OpenRouter: ещё и обходим хостинг самого DeepSeek, чтобы не встать в китайскую очередь в их часы пик.
-  const extra = PROVIDER === "deepseek" ? { thinking: { type: "disabled" } }
-    : PROVIDER === "openrouter" ? { reasoning: { effort: "none" }, provider: { ignore: ["deepseek"] } }
+  const extra = name === "deepseek" ? { thinking: { type: "disabled" } }
+    : name === "openrouter" ? { reasoning: { effort: "none" }, provider: { ignore: ["deepseek"] } }
     : {};
   const body = JSON.stringify({ model: cfg.model, temperature: TEMPERATURE, max_tokens: MAX_TOKENS, messages: [{ role: "user", content: prompt }], ...extra });
-  // Страховка: таймаут на каждый запрос + повторы при перегрузе (503/5xx), лимите (429), таймауте и обрыве сети.
+  // Страховка: таймаут на каждый запрос + повторы при перегрузе (5xx), лимите (429), «подожди» от OpenRouter (402),
+  // таймауте и обрыве сети. Если сервер сам говорит, сколько ждать (Retry-After), — ждём столько (но не больше 15 с).
   // Ошибки вроде 400/401 (неверный запрос/ключ) не повторяем — повтор их не вылечит.
   for (let attempt = 0; ; attempt++) {
+    let wait = RETRY_DELAYS[attempt];
     try {
       const res = await fetch(cfg.url, {
         method: "POST",
@@ -312,7 +352,9 @@ async function callModel(prompt) {
       });
       if (!res.ok) {
         const err = new Error(`HTTP ${res.status}: ${(await res.text()).slice(0, 200)}`);
-        err.retry = res.status === 429 || res.status >= 500;
+        err.retry = res.status === 429 || res.status === 402 || res.status === 408 || res.status >= 500;
+        const ra = Number(res.headers.get("retry-after"));
+        if (ra > 0) wait = Math.min(ra * 1000, 15000);
         throw err;
       }
       const data = await res.json();
@@ -325,8 +367,9 @@ async function callModel(prompt) {
       const timeout = e.name === "TimeoutError" || e.name === "AbortError";
       const retriable = e.retry || timeout || e.name === "TypeError";   // TypeError = обрыв сети у fetch
       if (!retriable || attempt >= RETRY_DELAYS.length) throw timeout ? new Error(`модель молчит дольше ${MODEL_TIMEOUT_MS / 1000} с`) : e;
-      console.log(DIM(`   ⏳ модель не ответила (${timeout ? "таймаут" : e.message.slice(0, 60)}), повтор ${attempt + 1}/${RETRY_DELAYS.length} через ${RETRY_DELAYS[attempt] / 1000} с…`));
-      await sleep(RETRY_DELAYS[attempt]);
+      const S = CUR(); if (S && S.aborted) throw e;                     // партию бросили — не ждём
+      console.log(DIM(`   ⏳ ${name} не ответил (${timeout ? "таймаут" : e.message.slice(0, 60)}), повтор ${attempt + 1}/${RETRY_DELAYS.length} через ${(wait / 1000).toFixed(0)} с…`));
+      await sleep(wait);
     }
   }
 }
@@ -766,14 +809,18 @@ async function gameLoop() {
 
   let guard = 0;
   while (guard++ < 15) {
+    if (CUR().aborted) return;
     await doNight();
     announceDead();
     if (checkWin()) break;
+    if (CUR().aborted) return;
     await doDiscussion();
+    if (CUR().aborted) return;
     await doVote();
     if (checkWin()) break;
     G.day++;
   }
+  if (CUR().aborted) return;
   endGame();
   const hp = G.players.find((p) => p.human);
   if (hp) gamelog.finishGame(CUR().gameId, hp.role, G.winner, G.day, hp.alive);   // журнал: партия доиграна
@@ -786,9 +833,19 @@ startWeb();
 
 // Уборка памяти: раз в 5 минут выметаем партии, доигранные больше 30 минут назад.
 // Активные (finishedAt ещё не проставлен) и недавно законченные — не трогаем.
-setInterval(() => {
+// Брошенные: партия не доиграна, а все вкладки закрыты дольше ABANDON_MIN минут — останавливаем и выметаем.
+// Иначе с рекламы партии копились бы в памяти, а ИИ доигрывали бы для пустого зала за твои деньги.
+const ABANDON_MIN = Number(process.env.ABANDON_MIN ?? 15);
+function sweep() {
   const now = Date.now();
   for (const [uid, S] of sessions) {
-    if (S.finishedAt && now - S.finishedAt > 30 * 60 * 1000) sessions.delete(uid);
+    if (S.finishedAt && now - S.finishedAt > 30 * 60 * 1000) { sessions.delete(uid); continue; }
+    if (!S.finishedAt && !S.clients.length && S.emptySince && now - S.emptySince > ABANDON_MIN * 60 * 1000) {
+      S.aborted = true;                                  // ИИ больше не зовём, ход человека не ждём
+      if (S.pending) { const p = S.pending; S.pending = null; p.reject(abortError()); }
+      sessions.delete(uid);
+      console.log(DIM(`🧹 партия игрока #${uid} брошена (вкладка закрыта > ${ABANDON_MIN} мин) — остановлена и выметена`));
+    }
   }
-}, 5 * 60 * 1000);
+}
+setInterval(sweep, (Number(process.env.SWEEP_SEC) || 300) * 1000);
