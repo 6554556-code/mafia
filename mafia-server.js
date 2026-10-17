@@ -61,16 +61,41 @@ const sessions = new Map();            // userId -> партия
 const CUR = () => als.getStore();      // партия текущего async-контекста
 
 function makeSession(userId, humanName, humanAvatar, humanBio) {
-  return { userId, humanName, humanAvatar, humanBio, G: null, clients: [], eventBuffer: [], pending: null, finishedAt: null };
+  return { userId, humanName, humanAvatar, humanBio, premium: false, eyeUnlocked: false, G: null, clients: [], eventBuffer: [], pending: null, finishedAt: null };
 }
+
+// ── Глаз бога: что игроку можно видеть ──
+// Пока игрок в игре (и без премиума) сервер НЕ присылает чужие роли, мысли, ночные действия и чужой шёпот —
+// их не подсмотреть даже через инструменты разработчика. Выбыл или партия окончена — глаз открывается.
+function eyeOpen(S) { return !!(S.premium || S.eyeUnlocked); }
+function humanOf(S) { return S.G ? S.G.players.find((p) => p.human) : null; }
+function viewFor(S, ev) {
+  if (eyeOpen(S)) return ev;
+  if (ev.type === "think" || ev.type === "act") return null;
+  const me = humanOf(S);
+  if (ev.type === "pm") return me && (ev.from === me.name || (ev.to || []).includes(me.name)) ? ev : null;
+  if (ev.type === "roster") return { ...ev, players: ev.players.map((p) => {
+    // своя роль, роли выбывших (они и так вскрыты) и напарник-мафия для игрока-мафии — видны; остальные скрыты
+    const known = !me || p.name === me.name || p.alive === false || (me.role === "mafia" && p.role === "mafia");
+    return known ? p : { ...p, role: null };
+  }) };
+  return ev;
+}
+function sendTo(S, res, ev) { const v = viewFor(S, ev); if (v) res.write(`data: ${JSON.stringify(v)}\n\n`); }
 
 // послать событие вкладкам ТЕКУЩЕЙ партии (и запомнить в её буфер)
 function broadcast(ev) {
   const S = CUR();
   if (!S) return;
   S.eventBuffer.push(ev);
-  const data = `data: ${JSON.stringify(ev)}\n\n`;
-  S.clients.forEach((res) => res.write(data));
+  S.clients.forEach((res) => sendTo(S, res, ev));
+  // игрок выбыл из игры или партия окончена — открываем глаз; вкладка перечитает партию уже со всеми секретами
+  const me = humanOf(S);
+  if (!S.eyeUnlocked && ((ev.type === "dead" && me && ev.name === me.name) || ev.type === "gameover")) {
+    S.eyeUnlocked = true;
+    const msg = `data: ${JSON.stringify({ type: "eye_unlocked", why: ev.type === "gameover" ? "end" : "out" })}\n\n`;
+    S.clients.forEach((res) => res.write(msg));   // в буфер не пишем — это сигнал «перечитай», а не событие партии
+  }
 }
 
 // поставить ТЕКУЩУЮ партию на паузу и ждать ответа её человека из браузера
@@ -189,7 +214,8 @@ function startWeb() {
     let S = sessions.get(me.id);
     const fresh = !S;
     if (fresh) { S = makeSession(me.id, me.name, me.avatar, { age: me.bio_age, job: me.bio_job, hobby: me.bio_hobby }); sessions.set(me.id, S); }  // первая вкладка — заводим партию
-    S.eventBuffer.forEach((ev) => res.write(`data: ${JSON.stringify(ev)}\n\n`)); // проигрываем уже случившееся
+    res.write(`data: ${JSON.stringify({ type: "eye_state", open: eyeOpen(S), premium: !!S.premium })}\n\n`);   // можно ли глаз
+    S.eventBuffer.forEach((ev) => sendTo(S, res, ev)); // проигрываем уже случившееся (секреты — только если глаз открыт)
     S.clients.push(res);
     req.on("close", () => { S.clients = S.clients.filter((c) => c !== res); });
     if (fresh) {                                     // новая партия — крутим её в собственном «ярлычке»
@@ -617,7 +643,7 @@ function announceDead() {
   narrator(`\n☀️ День ${G.day}.`);
   if (!G.lastDead.length) result("Ночь прошла тихо — все живы.");
   else {
-    G.lastDead.forEach((d) => { result(`Ночью убили ${d.name}. ${d.name} — ${roleName(d.revealed)}.`, d.revealed === "mafia" || d.revealed === "maniac"); broadcast({ type: "dead", name: d.name }); });
+    G.lastDead.forEach((d) => { result(`Ночью убили ${d.name}. ${d.name} — ${roleName(d.revealed)}.`, d.revealed === "mafia" || d.revealed === "maniac"); broadcast({ type: "dead", name: d.name, role: d.revealed }); });
     G.lastOut = G.lastDead.map((d) => ({ name: d.name, role: d.revealed, how: "night" }));   // все погибшие за ночь
   }
   G.lastDead = [];
@@ -666,7 +692,7 @@ async function doVote() {
   lynched.alive = false; lynched.revealed = lynched.role;
   result(`Казнён ${lynched.name} (${max} гол.). ${lynched.name} — ${roleName(lynched.revealed)}.`, lynched.revealed === "mafia" || lynched.revealed === "maniac");
   G.lastOut = [{ name: lynched.name, role: lynched.revealed, how: "lynch" }];
-  broadcast({ type: "dead", name: lynched.name });
+  broadcast({ type: "dead", name: lynched.name, role: lynched.revealed });
 }
 
 function checkWin() {
@@ -727,7 +753,8 @@ async function gameLoop() {
   }
 
   broadcast({ type: "reset" });
-  broadcast({ type: "roster", day: G.day, players: G.players.map((p) => ({ name: p.name, c: p.c, av: p.av, role: p.role, alive: true, age: p.age, job: p.job, hobby: p.hobby, persona: p.persona })) });
+  const setup = {}; G.players.forEach((p) => (setup[p.role] = (setup[p.role] || 0) + 1));   // состав стола — публичен
+  broadcast({ type: "roster", day: G.day, setup, players: G.players.map((p) => ({ name: p.name, c: p.c, av: p.av, role: p.role, alive: true, age: p.age, job: p.job, hobby: p.hobby, persona: p.persona })) });
   if (humanP) broadcast({ type: "you", name: humanP.name, role: humanP.role });
   if (humanP && CUR().userId) CUR().gameId = gamelog.startGame(CUR().userId, humanP.name, humanP.role);   // журнал: партия началась
 
