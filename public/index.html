@@ -390,7 +390,7 @@ function setEyeAllowed(ok){
   if(!ok){ b.classList.remove('on'); document.body.classList.add('blind'); }
 }
 function toggleEye(){
-  if(!eyeAllowed){ toast("👁 Глаз бога откроется, когда ты выбудешь из игры.<br>Видеть всё с первой минуты — в <b>Премиум</b> (скоро)."); return; }
+  if(!eyeAllowed){ toast("👁 <b>Глаз Бога</b> даёт тебе право увидеть все роли, мысли, шёпот игроков. Видеть с первой минуты можно только на <b>Премиум</b> тарифе. Сейчас ты можешь включить Глаз только после твоего выбывания из игры или в финале.", 7000); return; }
   const on=!document.getElementById('eyeBtn').classList.contains('on');
   document.getElementById('eyeBtn').classList.toggle('on',on);
   document.body.classList.toggle('blind',!on);
@@ -593,9 +593,7 @@ function handle(e){
     case "eye_unlocked":
       // сервер открыл глаз: перечитываем партию — теперь придёт и всё скрытое, на своих местах в ленте
       setEyeAllowed(true);
-      toast(e.why==="end" ? "Партия окончена — 👁 Глаз бога открыт: смотри, кто кем был и что думал."
-                          : "Ты вне игры — 👁 Глаз бога открыт: смотри, кто кем был и что думал.", 6000);
-      document.getElementById('eyeBtn').classList.add('fresh');
+      document.getElementById('eyeBtn').classList.add('fresh');   // без всплывашки — не перекрываем итог; значок тихо пульсирует
       reconnect();break;
     case "you":
     myName=e.name; youRoleEl.textContent=roleRu[e.role]||e.role; dayChip.classList.add('has-role');render();break;
