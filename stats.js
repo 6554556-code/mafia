@@ -29,98 +29,89 @@ const pct = (a, b) => b ? Math.round((100 * a) / b) + "%" : "—";
 const avg = (a, b) => b ? (a / b).toFixed(1).replace(".0", "") : "—";
 
 // ── данные ──
+// Отчёт — за последние сутки (от прошлого отчёта до этого). Для «за всё время» берём полную историю.
+const since = now - DAY_MS;
 function load() {
-  const users = db.prepare("SELECT id, name, created FROM users").all();
-  const games = db.prepare("SELECT * FROM games ORDER BY id").all();
-  const msgs = db.prepare(`SELECT m.*, g.user_name, g.role FROM game_msgs m JOIN games g ON g.id = m.game_id ORDER BY m.id`).all();
-  return { users, games, msgs };
+  const users = db.prepare("SELECT id, name, email, created FROM users").all();
+  const email = new Map(users.map((u) => [u.id, u.email]));
+  const games = db.prepare("SELECT * FROM games ORDER BY id").all().map((g) => ({ ...g, email: email.get(g.user_id) || "" }));
+  const msgs = db.prepare(`SELECT m.*, g.user_name, g.role FROM game_msgs m JOIN games g ON g.id = m.game_id ORDER BY m.id`).all()
+    .map((m) => ({ ...m, email: email.get(m.user_id) || "" }));
+  return {
+    users, games, msgs,                                    // вся история (для строки «за всё время»)
+    dUsers: users.filter((u) => u.created >= since),       // за сутки
+    dGames: games.filter((g) => g.started >= since),
+    dMsgs: msgs.filter((m) => m.ts >= since),
+  };
 }
 
-// ── сводка текстом ──
-function summary({ users, games, msgs }) {
+// ── сводка текстом (за сутки) ──
+function summary({ users, games, dUsers, dGames, dMsgs }) {
   const L = [];
-  L.push(`📊 Мафия — сводка на ${fmt(now)} (МСК)`);
+  L.push(`📊 Мафия — сутки: ${fmt(since)} → ${fmt(now)} (МСК)`);
 
-  // игроки
+  // кто играл за сутки: новички (первая партия — в эти сутки) и вернувшиеся (играли и раньше)
+  const firstGame = new Map();
+  for (const g of games) if (!firstGame.has(g.user_id)) firstGame.set(g.user_id, g.started);
   const byUser = new Map();
-  for (const g of games) {
-    if (!byUser.has(g.user_id)) byUser.set(g.user_id, { name: g.user_name, games: 0, days: new Set(), last: 0 });
-    const u = byUser.get(g.user_id);
-    u.games++; u.days.add(dayKey(g.started)); u.last = Math.max(u.last, g.started); u.name = g.user_name;
+  for (const g of dGames) {
+    if (!byUser.has(g.user_id)) byUser.set(g.user_id, { name: g.user_name, games: 0 });
+    const u = byUser.get(g.user_id); u.games++; u.name = g.user_name;
   }
   const played = byUser.size;
-  const returned = [...byUser.values()].filter((u) => u.days.size >= 2).length;
-  const newUsers = users.filter((u) => now - u.created < DAY_MS).length;
-  L.push("", "👥 Игроки");
-  L.push(`Зарегистрировано: ${users.length}${newUsers ? ` (+${newUsers} за сутки)` : ""}`);
-  L.push(`Сыграли хотя бы раз: ${played}`);
-  L.push(`Вернулись в другой день: ${returned} из ${played} (${pct(returned, played)})  ← главная цифра`);
-  L.push(`Партий на игрока: в среднем ${avg(games.length, played)}`);
+  const newbies = [...byUser.keys()].filter((id) => firstGame.get(id) >= since).length;
+  L.push("", "👥 Игроки за сутки");
+  L.push(`Новых регистраций: ${dUsers.length}`);
+  L.push(`Играли: ${played} — новичков ${newbies}, вернулись ${played - newbies}`);
+  L.push(`Партий на игрока: в среднем ${avg(dGames.length, played)}`);
 
-  // партии
-  const fin = games.filter((g) => g.finished);
-  const aband = games.filter((g) => status(g) === "брошена").length;
-  const going = games.length - fin.length - aband;
-  const day24 = games.filter((g) => now - g.started < DAY_MS).length;
-  const withMsgs = games.filter((g) => g.msgs > 0).length;
-  const totalTexts = games.reduce((s, g) => s + g.msgs, 0);
-  L.push("", "🎲 Партии");
-  L.push(`Всего: ${games.length}${day24 ? ` (за сутки: ${day24})` : ""}`);
-  L.push(`Доиграно: ${fin.length} · Брошено: ${aband}${going ? ` · Идёт сейчас: ${going}` : ""}`);
+  // партии за сутки
+  const fin = dGames.filter((g) => g.finished);
+  const aband = dGames.filter((g) => status(g) === "брошена").length;
+  const going = dGames.length - fin.length - aband;
+  const withMsgs = dGames.filter((g) => g.msgs > 0).length;
+  const totalTexts = dGames.reduce((s, g) => s + g.msgs, 0);
+  L.push("", "🎲 Партии за сутки");
+  L.push(`Всего: ${dGames.length} · Доиграно: ${fin.length} · Брошено: ${aband}${going ? ` · Идёт сейчас: ${going}` : ""}`);
   L.push(`Средняя длина: ${avg(fin.reduce((s, g) => s + (g.days || 0), 0), fin.length)} дн.`);
-  L.push(`Писали в чат: в ${pct(withMsgs, games.length)} партий · реплик за партию в среднем: ${avg(totalTexts, games.length)}`);
+  L.push(`Писали в чат: в ${pct(withMsgs, dGames.length)} партий · реплик за партию в среднем: ${avg(totalTexts, dGames.length)}`);
 
-  // по дням
-  const days = new Map();
-  for (const g of games) {
-    const k = dayKey(g.started);
-    if (!days.has(k)) days.set(k, { users: new Set(), games: 0, ts: g.started });
-    const d = days.get(k); d.users.add(g.user_id); d.games++;
-  }
-  if (days.size) {
-    L.push("", "📅 По дням (последние 7)");
-    [...days.entries()].sort((a, b) => b[0].localeCompare(a[0])).slice(0, 7)
-      .forEach(([, d]) => L.push(`${short(d.ts)}: ${d.users.size} игр., ${d.games} парт.`));
-  }
-
-  // роли
   if (fin.length) {
-    L.push("", "🎭 Роль игрока → побед (доигранные)");
+    L.push("", "🎭 Роль игрока → побед");
     for (const r of Object.keys(ROLE)) {
       const gs = fin.filter((g) => g.role === r);
       if (gs.length) L.push(`${ROLE[r]}: ${gs.length} парт., побед ${gs.filter((g) => g.won).length}`);
     }
   }
-
-  // самые активные
   if (played) {
-    L.push("", "🏆 Самые активные");
-    [...byUser.values()].sort((a, b) => b.games - a.games).slice(0, 5)
-      .forEach((u) => L.push(`${u.name} — ${u.games} парт., дней: ${u.days.size}, последний раз ${short(u.last)}`));
+    L.push("", "🏆 Самые активные за сутки");
+    [...byUser.values()].sort((a, b) => b.games - a.games).slice(0, 5).forEach((u) => L.push(`${u.name} — ${u.games} парт.`));
   }
+  L.push("", `💬 Реплик игроков за сутки: ${dMsgs.length}`);
 
-  const newMsgs = msgs.filter((m) => now - m.ts < DAY_MS).length;
-  L.push("", `💬 Реплик игроков всего: ${msgs.length}${newMsgs ? ` (новых за сутки: ${newMsgs})` : ""}`);
+  // одна строка за всё время: главная цифра теста за сутки не считается
+  const days = new Map();
+  for (const g of games) { if (!days.has(g.user_id)) days.set(g.user_id, new Set()); days.get(g.user_id).add(dayKey(g.started)); }
+  const returned = [...days.values()].filter((d) => d.size >= 2).length;
+  L.push("", `📈 За всё время: зарегистрировано ${users.length} · играли ${days.size} · вернулись в другой день ${returned} из ${days.size} (${pct(returned, days.size)})`);
   return L.join("\n");
 }
 
-// ── файлы для Excel: BOM (чтобы русские буквы читались) + разделитель «;» (русский Excel) ──
+// ── файлы для Excel (за сутки): BOM (чтобы русские буквы читались) + разделитель «;» (русский Excel) ──
 function csv(head, rows) {
   const cell = (v) => `"${String(v ?? "").replace(/"/g, '""')}"`;
-  return "﻿" + [head, ...rows].map((r) => r.map(cell).join(";")).join("\r\n");
+  return "\uFEFF" + [head, ...rows].map((r) => r.map(cell).join(";")).join("\r\n");
 }
-function gamesCsv({ games }) {
+function gamesCsv({ dGames }) {
   return csv(
-    ["№ партии", "Игрок", "Роль", "Начало (МСК)", "Конец (МСК)", "Статус", "Победила сторона", "Игрок победил", "Дней", "Дожил до конца", "Реплик", "Новое за сутки"],
-    games.map((g) => [g.id, g.user_name, ROLE[g.role] || g.role, fmt(g.started), fmt(g.finished), status(g),
-      WIN[g.winner] || "", g.finished ? (g.won ? "да" : "нет") : "", g.days ?? "", g.finished ? (g.alive ? "да" : "нет") : "",
-      g.msgs, now - g.started < DAY_MS ? "✓" : ""]));
+    ["№ партии", "Игрок", "Почта", "Роль", "Начало (МСК)", "Конец (МСК)", "Статус", "Победила сторона", "Игрок победил", "Дней", "Дожил до конца", "Реплик"],
+    dGames.map((g) => [g.id, g.user_name, g.email, ROLE[g.role] || g.role, fmt(g.started), fmt(g.finished), status(g),
+      WIN[g.winner] || "", g.finished ? (g.won ? "да" : "нет") : "", g.days ?? "", g.finished ? (g.alive ? "да" : "нет") : "", g.msgs]));
 }
-function msgsCsv({ msgs }) {
+function msgsCsv({ dMsgs }) {
   return csv(
-    ["Время (МСК)", "Игрок", "№ партии", "Роль игрока", "День", "Тип", "Кому / за кого", "Текст", "Новое за сутки"],
-    msgs.map((m) => [fmt(m.ts), m.user_name, m.game_id, ROLE[m.role] || m.role, m.day ?? "", KIND[m.kind] || m.kind,
-      m.target || "", m.text || "", now - m.ts < DAY_MS ? "✓" : ""]));
+    ["Время (МСК)", "Игрок", "Почта", "№ партии", "Роль игрока", "День", "Тип", "Кому / за кого", "Текст"],
+    dMsgs.map((m) => [fmt(m.ts), m.user_name, m.email, m.game_id, ROLE[m.role] || m.role, m.day ?? "", KIND[m.kind] || m.kind, m.target || "", m.text || ""]));
 }
 
 // ── Telegram ──
@@ -149,7 +140,7 @@ async function sendTelegram(data) {
     f.append("document", new Blob([content], { type: "text/csv" }), name);
     await tg("sendDocument", f);
   }
-  console.log(`✓ Отправлено в Telegram: сводка + 2 файла (партий: ${data.games.length}, реплик: ${data.msgs.length})`);
+  console.log(`✓ Отправлено в Telegram: сводка + 2 файла за сутки (партий: ${data.dGames.length}, реплик: ${data.dMsgs.length})`);
 }
 async function chatId() {
   const ups = await tg("getUpdates");
