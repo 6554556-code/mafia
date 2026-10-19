@@ -165,6 +165,32 @@ function startWeb() {
     res.clearCookie("sid", { path: "/" });
     res.json({ ok: true });
   });
+  // Панель дежурного: живые цифры. Отвечает ТОЛЬКО запросу с самого сервера (node stats.js online);
+  // всё, что пришло через Caddy (там всегда есть X-Forwarded-For) или снаружи, — «не найдено».
+  app.get("/admin/online", (req, res) => {
+    const ra = req.socket.remoteAddress || "";
+    const local = ra === "127.0.0.1" || ra === "::1" || ra === "::ffff:127.0.0.1";
+    if (!local || req.headers["x-forwarded-for"]) return res.status(404).end();
+    const all = [...sessions.values()];
+    const live = all.filter((S) => !S.finishedAt && !S.aborted);
+    const win = Number(req.query.min || 10) * 60e3, now = Date.now();
+    const recent = SPEED.filter((x) => now - x.t < win);
+    const q = (arr, p) => { if (!arr.length) return null; const a = [...arr].sort((x, y) => x - y); return a[Math.min(a.length - 1, Math.floor(p * a.length))]; };
+    const ms = recent.map((x) => x.ms);
+    const byProv = {};
+    for (const x of recent) (byProv[x.prov] = byProv[x.prov] || []).push(x.ms);
+    res.json({
+      online: all.filter((S) => S.clients.length).length,           // людей с открытой вкладкой
+      games: live.length,                                            // недоигранных партий в памяти
+      waitingHuman: live.filter((S) => S.pending).length,            // ждут хода человека
+      inflight: INFLIGHT,                                            // запросов к ИИ прямо сейчас
+      route: PROVIDER === "openrouter" ? OR_ROUTE : PROVIDER,
+      speed: { minutes: win / 60e3, count: ms.length, p50: q(ms, 0.5), p90: q(ms, 0.9), max: ms.length ? Math.max(...ms) : null,
+        slow: ms.filter((m) => m > SLOW_MS).length, failed: recent.filter((x) => !x.ok).length,
+        providers: Object.entries(byProv).map(([p, a]) => ({ p, n: a.length, p50: q(a, 0.5) })).sort((a, b) => b.n - a.n) },
+    });
+  });
+
   app.get("/me", (req, res) => {
     res.json({ user: auth.userByToken(auth.tokenFromReq(req)) });
   });
@@ -252,6 +278,7 @@ function startWeb() {
 
   app.listen(PORT, () => {
     console.log(BOLD(`\n🌐 Веб-сервер поднят на порту ${PORT}. Открой в браузере адрес сервера с :${PORT}`));
+    console.log(DIM(`   Модель: ${PROVIDER}${PROVIDER === "openrouter" ? ` · маршрут: ${OR_ROUTE}` : ""}${FALLBACK ? ` · запасной путь: ${FALLBACK}` : ""}`));
     console.log(DIM("   Партия начнётся, как только откроется вкладка.\n"));
   });
 }
@@ -313,18 +340,49 @@ let USAGE = { in: 0, out: 0, calls: 0, cost: 0 };
 // Запасной провайдер: если основной не ответил после всех повторов (или кончились деньги/сломан ключ) —
 // идём в запасной. По умолчанию для OpenRouter это DeepSeek напрямую, если его ключ лежит в .env.
 const FALLBACK = process.env.FALLBACK ?? (PROVIDER === "openrouter" ? "deepseek" : "");
+
+// Маршрут в OpenRouter: какой из ~30 хостингов модели брать.
+//   balanced (по умолчанию) — быстрые в приоритете (≥ OR_MIN_TPS ток/с и отклик ≤ OR_MAX_LAT с), среди них подешевле;
+//                             это приоритет, а не запрет: если быстрых нет, ответит хоть кто-то
+//   fast  — всегда самый быстрый (дороже)        cheap — самый дешёвый (как было: медленно)
+const OR_ROUTE = process.env.OR_ROUTE || "balanced";
+function orProvider() {
+  const base = { ignore: ["deepseek"] };   // хостинг самого DeepSeek обходим — там китайская очередь в часы пик
+  if (OR_ROUTE === "fast") return { ...base, sort: "throughput" };
+  if (OR_ROUTE === "cheap") return base;
+  return { ...base, preferred_min_throughput: Number(process.env.OR_MIN_TPS || 50), preferred_max_latency: Number(process.env.OR_MAX_LAT || 2) };
+}
+
+// ── Спидометр: сколько длится каждый запрос к ИИ (с повторами и запасным путём — ровно столько ждёт игрок) ──
+const SPEED = [];          // последние запросы в памяти — для панели дежурного
+let INFLIGHT = 0;          // сколько запросов к ИИ «в полёте» прямо сейчас
+const SLOW_MS = 10000;     // медленнее — отмечаем в журнале 🐢
+function noteSpeed(ms, prov, ok) {
+  SPEED.push({ t: Date.now(), ms, prov, ok });
+  if (SPEED.length > 3000) SPEED.splice(0, SPEED.length - 3000);
+  gamelog.logAiCall(ms, prov, ok);
+  if (ms > SLOW_MS) console.log(DIM(`   🐢 запрос к ИИ ${(ms / 1000).toFixed(1)} с · ${prov}${ok ? "" : " · без ответа"}`));
+}
 async function callModel(prompt) {
   const S = CUR();
   if (S && S.aborted) throw new Error("партия брошена — модель не зовём");   // не тратим деньги на пустой зал
   USAGE.calls++;
   if (PROVIDER === "mock") return mockModel(prompt);
+  const t0 = Date.now(); INFLIGHT++;
+  let prov = PROVIDER, ok = false;
   try {
-    return await callProvider(PROVIDER, prompt);
-  } catch (e) {
-    const fb = PROVIDERS[FALLBACK];
-    if (!fb || FALLBACK === PROVIDER || !process.env[fb.keyEnv]) throw e;
-    console.log(DIM(`   ↪ ${PROVIDER} не справился (${String(e.message).slice(0, 60)}) — иду запасным путём: ${FALLBACK}`));
-    return await callProvider(FALLBACK, prompt);
+    try {
+      const r = await callProvider(PROVIDER, prompt); prov = r.prov; ok = true; return r.text;
+    } catch (e) {
+      const fb = PROVIDERS[FALLBACK];
+      if (!fb || FALLBACK === PROVIDER || !process.env[fb.keyEnv]) throw e;
+      console.log(DIM(`   ↪ ${PROVIDER} не справился (${String(e.message).slice(0, 60)}) — иду запасным путём: ${FALLBACK}`));
+      prov = FALLBACK;
+      const r = await callProvider(FALLBACK, prompt); prov = r.prov; ok = true; return r.text;
+    }
+  } finally {
+    INFLIGHT--;
+    noteSpeed(Date.now() - t0, prov, ok);
   }
 }
 
@@ -335,7 +393,7 @@ async function callProvider(name, prompt) {
   // «Думание» выключаем (иначе жжёт токены и тянет время). У каждого провайдера свой выключатель.
   // OpenRouter: ещё и обходим хостинг самого DeepSeek, чтобы не встать в китайскую очередь в их часы пик.
   const extra = name === "deepseek" ? { thinking: { type: "disabled" } }
-    : name === "openrouter" ? { reasoning: { effort: "none" }, provider: { ignore: ["deepseek"] } }
+    : name === "openrouter" ? { reasoning: { effort: "none" }, provider: orProvider() }
     : {};
   const body = JSON.stringify({ model: cfg.model, temperature: TEMPERATURE, max_tokens: MAX_TOKENS, messages: [{ role: "user", content: prompt }], ...extra });
   // Страховка: таймаут на каждый запрос + повторы при перегрузе (5xx), лимите (429), «подожди» от OpenRouter (402),
@@ -362,7 +420,9 @@ async function callProvider(name, prompt) {
       USAGE.in += u.prompt_tokens || 0;
       USAGE.out += u.completion_tokens || 0;
       if (typeof u.cost === "number") USAGE.cost += u.cost;   // OpenRouter сам присылает точную цену запроса
-      return (data.choices?.[0]?.message?.content || "").trim();
+      // OpenRouter пишет, какой хостинг ответил — для спидометра
+      const prov = name === "openrouter" && data.provider ? `openrouter/${data.provider}` : name;
+      return { text: (data.choices?.[0]?.message?.content || "").trim(), prov };
     } catch (e) {
       const timeout = e.name === "TimeoutError" || e.name === "AbortError";
       const retriable = e.retry || timeout || e.name === "TypeError";   // TypeError = обрыв сети у fetch
