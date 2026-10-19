@@ -34,6 +34,13 @@ db.exec(`
     target  TEXT,                 -- кому/за кого (если есть)
     text    TEXT
   );
+  CREATE TABLE IF NOT EXISTS ai_calls (
+    ts       INTEGER NOT NULL,
+    ms       INTEGER NOT NULL,      -- сколько длился запрос к модели
+    provider TEXT,                  -- кто ответил: openrouter/Morph, deepseek, …
+    ok       INTEGER NOT NULL       -- 1 = ответ получен, 0 = сдались после всех повторов
+  );
+  CREATE INDEX IF NOT EXISTS ai_calls_ts ON ai_calls(ts);
 `);
 
 // Журнал не должен ронять игру: любая ошибка записи — только строчка в консоль
@@ -62,4 +69,8 @@ const finishGame = safe((gameId, role, winner, days, alive) => {
     .run(Date.now(), winner, won, days, alive ? 1 : 0, gameId);
 });
 
-module.exports = { db, startGame, logMsg, finishGame };
+// Спидометр: каждый запрос к ИИ — длительность и кто ответил (для сводки «скорость ИИ за сутки»)
+const logAiCall = safe((ms, provider, ok) =>
+  db.prepare("INSERT INTO ai_calls (ts, ms, provider, ok) VALUES (?, ?, ?, ?)").run(Date.now(), Math.round(ms), provider || null, ok ? 1 : 0));
+
+module.exports = { db, startGame, logMsg, finishGame, logAiCall };
