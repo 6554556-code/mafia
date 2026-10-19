@@ -3,6 +3,7 @@
 //   node stats.js            — сводка в консоль
 //   node stats.js telegram   — сводка + два файла для Excel в Telegram
 //   node stats.js chatid     — узнать свой chat_id (сначала напиши боту «привет»)
+//   node stats.js online     — панель дежурного: кто играет прямо сейчас и как быстро отвечает ИИ
 //
 // Ключи берём из ~/.env:  TG_BOT_TOKEN=...   TG_CHAT_ID=...
 
@@ -27,6 +28,8 @@ const KIND = { say: "за столом", vote: "голос", whisper: "шёпо�
 const status = (g) => g.finished ? "доиграна" : now - g.started > ABANDON_MS ? "брошена" : "идёт";
 const pct = (a, b) => b ? Math.round((100 * a) / b) + "%" : "—";
 const avg = (a, b) => b ? (a / b).toFixed(1).replace(".0", "") : "—";
+const sec = (ms) => ms == null ? "—" : (ms / 1000).toFixed(1) + " с";
+const quant = (arr, p) => { if (!arr.length) return null; const a = [...arr].sort((x, y) => x - y); return a[Math.min(a.length - 1, Math.floor(p * a.length))]; };
 
 // ── данные ──
 // Отчёт — за последние сутки (от прошлого отчёта до этого). Для «за всё время» берём полную историю.
@@ -89,6 +92,21 @@ function summary({ users, games, dUsers, dGames, dMsgs }) {
   }
   L.push("", `💬 Реплик игроков за сутки: ${dMsgs.length}`);
 
+  // скорость ИИ за сутки (один «ход» персонажа = 2 запроса: план + речь)
+  let calls = [];
+  try { calls = db.prepare("SELECT ms, provider, ok FROM ai_calls WHERE ts >= ?").all(since); } catch (_) {}
+  if (calls.length) {
+    const ms = calls.map((c) => c.ms);
+    const slow = ms.filter((m) => m > 10000).length, failed = calls.filter((c) => !c.ok).length;
+    L.push("", "🤖 Скорость ИИ за сутки");
+    L.push(`Запросов: ${calls.length} · обычно ${sec(quant(ms, 0.5))} · медленные 10% — от ${sec(quant(ms, 0.9))}`);
+    L.push(`Дольше 10 с: ${pct(slow, calls.length)}${failed ? ` · без ответа: ${failed}` : ""}`);
+    const by = {};
+    for (const c of calls) (by[c.provider || "?"] = by[c.provider || "?"] || []).push(c.ms);
+    const top = Object.entries(by).sort((a, b) => b[1].length - a[1].length).slice(0, 4);
+    L.push("Кто отвечал: " + top.map(([p, a]) => `${p.replace("openrouter/", "")} ${pct(a.length, calls.length)} (${sec(quant(a, 0.5))})`).join(" · "));
+  }
+
   // одна строка за всё время: главная цифра теста за сутки не считается
   const days = new Map();
   for (const g of games) { if (!days.has(g.user_id)) days.set(g.user_id, new Set()); days.get(g.user_id).add(dayKey(g.started)); }
@@ -150,11 +168,28 @@ async function chatId() {
   for (const [id, name] of chats) console.log(`${name}: впиши в ~/.env строку  TG_CHAT_ID=${id}`);
 }
 
+// ── панель дежурного: спрашиваем живую игру на этом же сервере ──
+async function online() {
+  const port = process.env.PORT || 3000;
+  let d;
+  try { d = await (await fetch(`http://127.0.0.1:${port}/admin/online?min=10`, { signal: AbortSignal.timeout(5000) })).json(); }
+  catch (e) { throw new Error(`игра не отвечает на порту ${port} — она запущена? (systemctl status mafia)`); }
+  const s = d.speed;
+  console.log(`👥 Сейчас с открытой вкладкой: ${d.online}`);
+  console.log(`🎲 Партий идёт: ${d.games} · ждут хода человека: ${d.waitingHuman} · ИИ думает: ${d.games - d.waitingHuman}`);
+  console.log(`📡 Запросов к ИИ прямо сейчас: ${d.inflight} · маршрут: ${d.route}`);
+  if (!s.count) { console.log(`🤖 За последние ${s.minutes} мин запросов к ИИ не было`); return; }
+  console.log(`🤖 За ${s.minutes} мин: запросов ${s.count} · обычно ${sec(s.p50)} · медленные 10% — от ${sec(s.p90)} · самый долгий ${sec(s.max)}`);
+  console.log(`   дольше 10 с: ${s.slow}${s.failed ? ` · без ответа: ${s.failed}` : ""}`);
+  console.log("   кто отвечал: " + s.providers.map((x) => `${x.p.replace("openrouter/", "")} ×${x.n} (${sec(x.p50)})`).join(" · "));
+}
+
 // ── запуск ──
 (async () => {
   const mode = process.argv[2] || "";
   try {
     if (mode === "chatid") return await chatId();
+    if (mode === "online") return await online();
     const data = load();
     if (mode === "telegram") return await sendTelegram(data);
     console.log(summary(data));
