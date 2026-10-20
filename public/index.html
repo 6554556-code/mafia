@@ -81,6 +81,31 @@
   .chip.mode.locked::after{content:"🔒";position:absolute;right:-6px;top:-8px;font-size:12px}
   .chip.mode.fresh{animation:eyepulse 1.2s ease-in-out 3}
   @keyframes eyepulse{0%,100%{box-shadow:0 0 0 0 #b5352c00}50%{box-shadow:0 0 0 5px #b5352c66;opacity:1}}
+  /* ── турнирная таблица ── */
+  .chip.lb{cursor:pointer;user-select:none;font-size:16px;opacity:.85;transition:opacity .15s}
+  .chip.lb:hover{opacity:1}
+  .lb-card{max-width:440px}
+  .lb-tabs{display:flex;gap:6px;margin-bottom:10px}
+  .lb-tabs button{flex:1;padding:7px 0;font-family:var(--ui-font);font-size:13px;font-weight:700;cursor:pointer;
+    background:var(--paper-2);border:2px solid var(--line);color:var(--ink-soft)}
+  .lb-tabs button.on{background:var(--mafia-tx);color:#fff}
+  .lb-row{display:grid;grid-template-columns:28px 30px 1fr 44px 38px 40px;gap:6px;align-items:center;
+    padding:5px 4px;font-size:13px;border-bottom:1px dashed #cfcabc}
+  .lb-row.head{font-size:10px;color:var(--ink-soft);border-bottom:2px solid var(--line);padding-bottom:4px}
+  .lb-row .r{font-weight:700;text-align:right}
+  .lb-row .a{width:30px;height:24px;background:#cfcabc;border:1px solid var(--line);overflow:hidden}
+  .lb-row .a img{width:100%;height:100%;object-fit:cover;image-rendering:pixelated;display:block}
+  .lb-row .n{font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .lb-row .p{font-weight:700;text-align:right;color:var(--mafia-tx)}
+  .lb-row .g,.lb-row .w{text-align:right;color:var(--ink-soft)}
+  .lb-row.me{background:#fff3c4;border:2px solid #d4bd4c;border-radius:2px}
+  .lb-gap{text-align:center;color:var(--ink-soft);padding:2px 0;font-size:12px}
+  .lb-empty{padding:16px 4px;text-align:center;color:var(--ink-soft);font-size:13px}
+  .lb-mine{margin:-2px 0 8px;padding:7px 10px;background:#fff3c4;border:2px solid #d4bd4c;font-size:13px;font-weight:700;color:#6b5410;text-align:center}
+  .lb-rules{margin-top:12px;font-size:11px;line-height:1.5;color:var(--ink-soft)}
+  .lb-list{max-height:min(60vh,520px);overflow-y:auto}
+  .score-line{background:#fff3c4;border:2px solid #d4bd4c;color:#6b5410;font-weight:700;text-align:center;
+    padding:9px 10px;font-size:14px;cursor:pointer}
   .toast{position:fixed;left:12px;right:12px;margin:0 auto;width:fit-content;bottom:110px;z-index:200;max-width:420px;
     background:var(--ink);color:var(--paper);border:2px solid var(--line);padding:10px 14px;font-size:14px;line-height:1.45;
     box-shadow:4px 4px 0 rgba(44,44,40,.25);opacity:0;pointer-events:none;transition:opacity .2s}
@@ -256,7 +281,7 @@
     .chip{padding:3px 8px;font-size:13px}
     .chip.day .day-role{font-size:14px}
     .chip.mode .eye-txt{display:none}
-    .chip.mode,.chip.door,.chip.gear{min-width:36px;padding:3px 6px;justify-content:center}
+    .chip.mode,.chip.door,.chip.gear,.chip.lb{min-width:36px;padding:3px 6px;justify-content:center}
     /* стол: 8 в ряд (при 16 игроках — 2 ряда), компактно */
     .seatsWrap{padding:3px}
     .seats{gap:2px}
@@ -296,6 +321,7 @@
       <div class="title pixel">МАФИЯ</div>
       <div class="chip day pixel" id="dayChip" title="Твоя роль и день"><span class="day-role" id="youRole"></span><span class="day-num">☀ <span id="dayLabel">День 1</span></span></div>
       <div class="chip mode pixel locked" id="eyeBtn" onclick="toggleEye()" title="Откроется, когда выбудешь из игры · сразу — в Премиум"><span class="eye">👁</span><span class="eye-txt">Глаз бога</span></div>
+      <div class="chip lb pixel" id="lbBtn" title="Турнирная таблица" onclick="openLeaderboard()">🏆</div>
       <div class="chip door pixel" id="logoutBtn" title="Выход" onclick="fetch('/logout',{method:'POST'}).finally(()=>location.href='/auth.html')">🚪</div>
       <div class="chip gear pixel" id="gearBtn" title="Настройки" onclick="openSettings()">⚙️</div>
     </div>
@@ -641,6 +667,14 @@ function handle(e){
       add(el("vote",`${esc(e.voter)} → <b>${esc(e.target)}</b>`+(e.reason?` · ${esc(e.reason)}`:"")));break;
     case "gameover":
       add(el("over",esc(e.text)));showReplay();break;
+    case "score":{
+      const line=document.createElement('div'); line.className='score-line ev';
+      line.textContent=`🏆 ${e.points>0?'+':''}${e.points} ${ptsWord(e.points)} за партию`+(e.rank?` · ты на ${e.rank}-м месте за неделю`:'');
+      line.title='Открыть турнирную таблицу'; line.onclick=openLeaderboard;
+      const rb=document.getElementById('replayBtn');
+      if(rb) feed.insertBefore(line,rb); else add(line);     // над кнопкой «Сыграть ещё»
+      if(atBottom()) feed.scrollTop=feed.scrollHeight;
+      break;}
   }
 }
 
@@ -726,7 +760,32 @@ async function saveBio(){
     msg.className='setmsg ok'; msg.textContent='«О себе» сохранено — появится со следующей партии ✓';
   }catch(e){ msg.className='setmsg err'; msg.textContent='Сервер не отвечает'; }
 }
-document.addEventListener('keydown',e=>{ if(e.key==='Escape'){ closeSettings(); closeBio(); } });
+// ── Турнирная таблица ──
+const ptsWord=n=>{const a=Math.abs(n)%100,b=a%10; return (a>10&&a<20)||b>4||b===0?'очков':b===1?'очко':'очка';};
+const gamesWord=n=>{const a=Math.abs(n)%100,b=a%10; return (a>10&&a<20)||b>4||b===0?'партий':b===1?'партия':'партии';};
+function openLeaderboard(){ document.getElementById('lbModal').style.display='flex'; loadLb('week'); }
+function closeLb(){ document.getElementById('lbModal').style.display='none'; }
+function lbRow(r){
+  return `<div class="lb-row${r.me?' me':''}"><span class="r">${r.rank}</span>`+
+    `<span class="a">${r.avatar?`<img src="avatars/${esc(r.avatar)}" alt="" onerror="this.remove()">`:''}</span>`+
+    `<span class="n">${esc(r.name)}${r.me?' (ты)':''}</span><span class="p">${r.points}</span><span class="g">${r.games}</span><span class="w">${r.winPct}%</span></div>`;
+}
+async function loadLb(period){
+  document.getElementById('lbWeek').classList.toggle('on',period==='week');
+  document.getElementById('lbAll').classList.toggle('on',period==='all');
+  const list=document.getElementById('lbList'); list.innerHTML='<div class="lb-empty">загрузка…</div>'; document.getElementById('lbMine').style.display='none';
+  let d; try{ d=await (await fetch('/leaderboard?period='+period)).json(); }catch(_){ list.innerHTML='<div class="lb-empty">не удалось загрузить</div>'; return; }
+  if(!d.top||!d.top.length){ list.innerHTML='<div class="lb-empty">'+(period==='week'?'На этой неделе ещё никто не доиграл партию. Будь первым!':'Пока пусто — доиграй партию!')+'</div>'; return; }
+  // закреплённая строка «Ты» — видна сразу, без прокрутки
+  const mine=document.getElementById('lbMine');
+  if(d.me){ mine.style.display=''; mine.textContent=`Ты: ${d.me.rank}-е место из ${d.total} · ${d.me.points} ${ptsWord(d.me.points)} · ${d.me.games} ${gamesWord(d.me.games)}`; }
+  else mine.style.display='none';
+  let html=d.top.map(lbRow).join('');
+  if(d.me && !d.top.some(r=>r.me)) html+='<div class="lb-gap">…</div>'+lbRow(d.me);   // себя видно всегда
+  else if(!d.me) html+='<div class="lb-gap">Тебя пока нет в таблице — доиграй партию до конца</div>';
+  list.innerHTML=html;
+}
+document.addEventListener('keydown',e=>{ if(e.key==='Escape'){ closeSettings(); closeBio(); closeLb(); } });
 
 // кнопка «Сыграть ещё»: просим сервер забыть доигранную партию и перезагружаемся —
 // новая заведётся сама на /events (тем же комиссаром, как задано при запуске)
@@ -797,6 +856,16 @@ connect();
     <div class="modal-head"><span id="bioName"></span><span class="x" onclick="closeBio()">✕</span></div>
     <div id="bioAva" style="width:120px;aspect-ratio:5/4;margin:0 auto 12px;border:2px solid var(--line);background:#cfcabc;overflow:hidden"></div>
     <div id="bioInfo" style="font-size:14px;line-height:1.7"></div>
+  </div>
+</div>
+<div class="modal pixel" id="lbModal" style="display:none" onclick="if(event.target===this)closeLb()">
+  <div class="modal-card lb-card">
+    <div class="modal-head"><span>🏆 Турнирная таблица</span><span class="x" onclick="closeLb()">✕</span></div>
+    <div class="lb-tabs"><button id="lbWeek" class="on" onclick="loadLb('week')">Неделя</button><button id="lbAll" onclick="loadLb('all')">Всё время</button></div>
+    <div class="lb-mine" id="lbMine" style="display:none"></div>
+    <div class="lb-row head"><span class="r">#</span><span></span><span>Игрок</span><span class="p" style="color:inherit">Очки</span><span class="g">Игр</span><span class="w">Побед</span></div>
+    <div class="lb-list" id="lbList"></div>
+    <div class="lb-rules">2 очка — твоя сторона победила и ты дожил · 1 очко — победила, но тебя уже нет.<br>Маньяк и мафия — одна команда «плохих». Неделя обнуляется в понедельник.</div>
   </div>
 </div>
 <div class="modal pixel" id="settings" style="display:none" onclick="if(event.target===this)closeSettings()">
