@@ -73,4 +73,62 @@ const finishGame = safe((gameId, role, winner, days, alive) => {
 const logAiCall = safe((ms, provider, ok) =>
   db.prepare("INSERT INTO ai_calls (ts, ms, provider, ok) VALUES (?, ?, ?, ?)").run(Date.now(), Math.round(ms), provider || null, ok ? 1 : 0));
 
-module.exports = { db, startGame, logMsg, finishGame, logAiCall };
+// ── Очки турнирной таблицы ──
+// Стороны: деревня (мирный, доктор, комиссар) и «плохие» (мафия, маньяк).
+//   2 — твоя сторона победила и ты дожил;  1 — твоя сторона победила, но тебя уже нет.
+//   Маньяк: дожил до победы мафии — тоже 2 (плохие победили вместе); погиб до победы мафии — 0.
+//   Мафия при победе маньяка-одиночки: дожила — 2, нет — 0 (маньяк побеждает сам за себя).
+function pointsFor(role, winner, alive) {
+  if (winner === "town") return ["civilian", "doctor", "komissar"].includes(role) ? (alive ? 2 : 1) : 0;
+  if (winner === "mafia") {
+    if (role === "mafia") return alive ? 2 : 1;
+    if (role === "maniac") return alive ? 2 : 0;
+    return 0;
+  }
+  if (winner === "maniac") {
+    if (role === "maniac") return 2;
+    if (role === "mafia") return alive ? 2 : 0;
+    return 0;
+  }
+  return 0;
+}
+
+// Начало текущей недели — понедельник 00:00 по Москве (МСК = UTC+3 круглый год)
+function weekStart(now = Date.now()) {
+  const MSK = 3 * 3600e3;
+  const d = new Date(now + MSK);                       // «московские» часы в UTC-полях
+  const dow = (d.getUTCDay() + 6) % 7;                 // 0 = понедельник
+  return Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate() - dow) - MSK;
+}
+
+// Таблица: только доигранные партии; ник и лицо — текущие из аккаунта (после смены ника — новые)
+let lbCache = { key: "", at: 0, rows: null };
+function leaderboardRows(period) {
+  const since = period === "week" ? weekStart() : 0;
+  const key = period + ":" + since;
+  if (lbCache.key === key && Date.now() - lbCache.at < 15000) return lbCache.rows;   // не считаем чаще раза в 15 с
+  const games = db.prepare("SELECT user_id, role, winner, alive FROM games WHERE finished IS NOT NULL AND started >= ?").all(since);
+  const by = new Map();
+  for (const g of games) {
+    const pts = pointsFor(g.role, g.winner, g.alive);
+    const r = by.get(g.user_id) || { userId: g.user_id, points: 0, games: 0, wins: 0 };
+    r.points += pts; r.games++; if (pts > 0) r.wins++;
+    by.set(g.user_id, r);
+  }
+  const users = new Map(db.prepare("SELECT id, name, avatar FROM users").all().map((u) => [u.id, u]));
+  const rows = [...by.values()]
+    .filter((r) => users.has(r.userId))
+    .map((r) => ({ ...r, name: users.get(r.userId).name, avatar: users.get(r.userId).avatar, winPct: Math.round((100 * r.wins) / r.games) }))
+    .sort((a, b) => b.points - a.points || a.games - b.games || a.userId - b.userId);   // больше очков; при равенстве — меньше партий
+  rows.forEach((r, i) => (r.rank = i + 1));
+  lbCache = { key, at: Date.now(), rows };
+  return rows;
+}
+function leaderboard(period, userId, top = 20) {
+  const rows = leaderboardRows(period);
+  const pub = (r) => r && { rank: r.rank, name: r.name, avatar: r.avatar, points: r.points, games: r.games, winPct: r.winPct, me: r.userId === userId };
+  return { period, top: rows.slice(0, top).map(pub), me: pub(rows.find((r) => r.userId === userId)) || null, total: rows.length };
+}
+function invalidateLeaderboard() { lbCache.key = ""; }
+
+module.exports = { db, startGame, logMsg, finishGame, logAiCall, pointsFor, leaderboard, invalidateLeaderboard, weekStart };
