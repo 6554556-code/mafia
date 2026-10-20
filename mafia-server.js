@@ -191,6 +191,14 @@ function startWeb() {
     });
   });
 
+  // Турнирная таблица: ?period=week|all → топ-20 + строка самого игрока (только ники и лица, никаких почт)
+  app.get("/leaderboard", (req, res) => {
+    const me = auth.userByToken(auth.tokenFromReq(req));
+    if (!me) return res.status(401).json({ error: "Не вошёл" });
+    const period = req.query.period === "all" ? "all" : "week";
+    res.json(gamelog.leaderboard(period, me.id, 20));
+  });
+
   app.get("/me", (req, res) => {
     res.json({ user: auth.userByToken(auth.tokenFromReq(req)) });
   });
@@ -883,7 +891,14 @@ async function gameLoop() {
   if (CUR().aborted) return;
   endGame();
   const hp = G.players.find((p) => p.human);
-  if (hp) gamelog.finishGame(CUR().gameId, hp.role, G.winner, G.day, hp.alive);   // журнал: партия доиграна
+  if (hp) {
+    gamelog.finishGame(CUR().gameId, hp.role, G.winner, G.day, hp.alive);   // журнал: партия доиграна
+    // турнирная таблица: сколько очков принесла партия и какое теперь место за неделю
+    gamelog.invalidateLeaderboard();
+    const pts = gamelog.pointsFor(hp.role, G.winner, hp.alive);
+    const lb = CUR().userId ? gamelog.leaderboard("week", CUR().userId, 0) : null;
+    broadcast({ type: "score", points: pts, rank: lb && lb.me ? lb.me.rank : null, total: lb ? lb.total : null });
+  }
   CUR().finishedAt = Date.now();   // партия доиграна — метка для будущей уборки памяти
   printCost();
 }
