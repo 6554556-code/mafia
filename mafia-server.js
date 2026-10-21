@@ -558,10 +558,33 @@ async function aiSpeak(p, round, plan) {
   const prompt = `${baseCtx(p)}${mood(p)}\n\nТвой тайный план (в голове):\n${plan || "(по ситуации)"}\n\nСкажи это ВСЛУХ как ${p.name}, живым голосом за столом, НЕ как аналитик:\n— коротко, 1–2 фразы, как в живом чате.\n— по делу: можешь обратиться по имени, привести довод, задать вопрос, поддержать или засомневаться.\n— ГЛАВНОЕ — держи свой характер и стиль: ${p.style}. Будь ЯРКИМ и узнаваемым, не усредняйся: если в твоём стиле резкость, колкости, подколы или обзывания — не стесняйся, выдавай их от души; если ты мягкий и милый — оставайся таким. (Без мата и без травли на пустом месте — но характерная дерзость или бестолковость это нормально, живые люди очень разные.)${dark ? " Ты за тёмных — факты можно аккуратно выдумать, мягко блефуй, не выдавая себя." : ""}\n— ЖИВИНКА: иногда (особенно в начале дня или между делом) можно вплести капельку человеческого — по-свойски поздороваться, подколоть по жизни или спросить о чём-то из досье («Фурия, как школа? опять в тиктоке залипаешь?»). НО: глянь, что уже сказали выше — не повторяй чужой вопрос и не наваливайтесь толпой на одного; это лёгкий штрих, а не замена игре.\nЕсли выгодно промолчать — ответь одним словом: молчу.\nТолько реплика (или «молчу»), без имени и кавычек.`;
   try { let t = await callModel(prompt); return t.replace(new RegExp(`^\\s*${p.name}\\s*:\\s*`, "i"), "").replace(/^["«»]+|["«»]+$/g, "").trim() || "…"; } catch (e) { warn(e); return "…"; }
 }
+// Обрезать по границе слова (а не посреди «науш…»)
+function clip(text, n = 140) {
+  const t = String(text || "").replace(/\s+/g, " ").trim();
+  if (t.length <= n) return t;
+  const cut = t.slice(0, n); const sp = cut.lastIndexOf(" ");
+  return (sp > n * 0.6 ? cut.slice(0, sp) : cut).replace(/[\s,;:—-]+$/, "") + "…";
+}
+// Страховочная сетка: злодей проговорился во фразе ВСЛУХ — такую фразу в общий чат не пускаем
+const SELF_LEAK = /напарник|подельник|сообщник|я\s+(—\s*)?(мафи|маньяк)|мы\s+(с\s+\S+\s+)?(мафи|убил)|наш[аиу]?\s+(команд|мафи)|мне\s+выгодн|нам\s+выгодн|сохранить\s+хаос|прикрыть\s+(своего|напарника)|спаса[юе]\s+(его|своего|напарника)|своих\s+не\s+сда/i;
+
 async function aiVote(p) {
   const list = living().map((x) => x.name).filter((n) => n !== p.name);
-  const prompt = `${baseCtx(p)}\n\nГолосование: кого казнить? Из живых (не себя): ${list.join(", ")}. Ответь ТОЛЬКО JSON: {"target":"Имя","reason":"коротко"}.`;
-  try { const j = extractJSON(await callModel(prompt)); const t = list.find((n) => j.target && n.toLowerCase() === String(j.target).toLowerCase()) || list[(Math.random() * list.length) | 0]; return { target: t, reason: (j.reason || "").toString().slice(0, 80) }; }
+  const dark = isDark(p.role);
+  const prompt = `${baseCtx(p)}\n\nГолосование: кого казнить? Из живых (не себя): ${list.join(", ")}.\n` +
+    `Дай ДВЕ причины:\n— "why": настоящая, тайная (только для тебя, вслух не звучит).\n` +
+    `— "say": что ты говоришь ВСЛУХ при всех, объявляя голос — коротко, до 12 слов, в своём стиле.` +
+    (dark ? ` Ты за тёмных: вслух спорь как честный мирный. НИКОГДА не упоминай напарника, свою роль, что тебе «выгодно», и не намекай на ночные дела — только подозрения, которые мог бы высказать любой мирный.` : "") +
+    `\nОтветь ТОЛЬКО JSON: {"target":"Имя","why":"...","say":"..."}.`;
+  try {
+    const j = extractJSON(await callModel(prompt));
+    const t = list.find((n) => j.target && n.toLowerCase() === String(j.target).toLowerCase()) || list[(Math.random() * list.length) | 0];
+    const why = clip(j.why || j.reason || "", 200);
+    let say = clip(j.say || "", 140);
+    if (dark && SELF_LEAK.test(say)) { secretAct(`… ${p.name} чуть не проговорился вслух: «${say}» — фраза не прозвучала`); say = ""; }
+    if (why) secretThought(p.name, `(голос → ${t}) ${why}`);   // настоящая причина — только в мыслях (видно через Глаз Бога)
+    return { target: t, reason: say };
+  }
   catch (e) { warn(e); return { target: list[(Math.random() * list.length) | 0], reason: "" }; }
 }
 async function aiNight(p, kind, opts) {
@@ -790,7 +813,7 @@ async function doVote() {
       const ans = await awaitHuman("vote", { candidates: cands });
       let target = ans.target;
       if (!cands.includes(target)) target = cands[(Math.random() * cands.length) | 0]; // подстраховка
-      r = { target, reason: (ans.reason || "").toString().slice(0, 80) };
+      r = { target, reason: clip(ans.reason || "", 140) };
     } else {
       r = await aiVote(p);
     }
