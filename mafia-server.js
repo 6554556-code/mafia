@@ -13,6 +13,7 @@ const SHOW_SECRETS = true;   // печатать роли, тайные мысл
 const HUMAN = process.env.HUMAN === "1" || process.env.HUMAN === "true"; // за столом сидит человек
 const HUMAN_ROLE = process.env.HUMAN_ROLE || null;   // какую роль дать человеку (komissar/doctor/mafia/…); пусто = случайная
 const PACING_MS = Number(process.env.PACING_MS ?? 10000);         // пауза между ходами в мс (0 = максимально быстро)
+const ATMO_TYPING_MS = Number(process.env.ATMO_TYPING_MS ?? 1100); // сколько «печатает…» рассказчик перед ночной/утренней строкой
 const TEMPERATURE = 0.9;     // «живость» речи
 const MAX_TOKENS = 400;
 const MODEL_TIMEOUT_MS = Number(process.env.MODEL_TIMEOUT_MS ?? 30000); // сколько ждём ответа модели на один запрос
@@ -96,6 +97,13 @@ function broadcast(ev) {
     const msg = `data: ${JSON.stringify({ type: "eye_unlocked", why: ev.type === "gameover" ? "end" : "out" })}\n\n`;
     S.clients.forEach((res) => res.write(msg));   // в буфер не пишем — это сигнал «перечитай», а не событие партии
   }
+}
+
+// послать событие вкладкам «вживую», НЕ запоминая в буфер (при перезаходе его не будет) — для точек «печатает…»
+function liveOnly(ev) {
+  const S = CUR();
+  if (!S) return;
+  S.clients.forEach((res) => sendTo(S, res, ev));
 }
 
 function abortError() { const e = new Error("партия брошена"); e.aborted = true; return e; }
@@ -729,6 +737,80 @@ function postPM(channel, from, parts, text) {
   secretPM(channel, from.name, text, parts.map((x) => x.name));
 }
 
+// ── Ночная атмосфера: рассказчик говорит, что делают роли (тексты — Иры) ──
+// Только для игрока: в лог для ИИ НЕ пишется (модель не путается и не тратит токены).
+// Новую роль добавить одной строкой: ключ = роль, массив фраз. Фразы в партии не повторяются.
+const ATMO = {
+  civilian: [
+    "🏚 Мирные жители задвигают засовы и молятся, чтобы стучали не к ним.",
+    "🏚 Мирные жители спят. Некоторые — в последний раз, но об этом не знают.",
+    "🏚 Мирные жители храпят на всю деревню. Мафии это только на руку.",
+    "🏚 Мирные жители спрятались под одеяла — самая надёжная защита со времён детства.",
+    "🏚 Мирные жители спят чутко: каждый скрип половицы — подозреваемый.",
+    "🌙 Город уснул. Самые умные предварительно закрыли двери. Наивные.",
+    "🛏️ Мирный житель лёг спать. План на утро был смелым — проснуться.",
+  ],
+  mafia: [
+    "🔫 Мафия выбирает жертву так же придирчиво, как арбуз на рынке.",
+    "🔫 Мафия достала блокнот. Вычеркнуть одно имя — дело минуты.",
+    "🔫 Мафия вышла на ночную смену. Без больничных и выходных.",
+    "🔫 Мафия решила, что в деревне стало слишком людно.",
+    "🔫 Мафия наводит порядок. Своими методами.",
+    "⚰️ Мафия кому-то заказала деревянный костюм. Размер уточнять не стала.",
+  ],
+  maniac: [
+    "🔪 Маньяк насвистывает в темноте. Лучше бы это был ветер.",
+    "🔪 Маньяк точит нож и улыбается своим мыслям. Мысли у него так себе.",
+    "🔪 Маньяк ни с кем не договаривается. Командная работа — не его.",
+    "🔪 Маньяк выбирает между мафией и мирными. Ему, честно говоря, без разницы.",
+    "🔪 Маньяк надел перчатки. Не от холода.",
+    "🔪 Маньяк считает окна, где ещё горит свет. Скоро станет на одно меньше.",
+  ],
+  doctor: [
+    "💉 Доктор идёт по пустой улице. Кто-то сегодня будет обязан ему жизнью. Или не будет.",
+    "💉 Доктор собрал чемоданчик: бинты, йод и надежда.",
+    "💉 Доктор моет руки. Тщательно.",
+    "💉 Доктор надеется, что сегодня обойдётся без вскрытия.",
+    "💉 Доктор вышел на дежурство.",
+    "💉 Доктор шепчет: «Только не сегодня». Кому — врачебная тайна.",
+  ],
+  komissar: [
+    "🕵️ Комиссар листает чужое дело при свете спички.",
+    "🕵️ Комиссар пьёт пятый кофе и смотрит на всех недоверчиво.",
+    "🕵️ Комиссар крадётся по улице, стараясь не наступить на улики.",
+    "🕵️ Комиссар достал лупу.",
+    "🕵️ Комиссар не верит никому.",
+    "🕵️ Комиссар сверяет показания.",
+    "🕵️ Комиссар заглядывает в окна.",
+    "🗝️ Комиссар нашёл нужную дверь.",
+  ],
+  dawn: [
+    "🌅 Солнце встаёт неохотно, будто знает, что увидит.",
+    "🌅 Петух прокричал. Кажется, единственный, кто выспался.",
+    "🌅 Рассвет. Деревня пересчитывает соседей.",
+    "🌅 Утро. Пахнет кофе и подозрениями.",
+    "🌅 Новый день. Кое-чьи планы на него уже отменены.",
+    "🌅 Солнце вышло. Свидетелей, как обычно, нет.",
+  ],
+};
+
+// Рассказчик «печатает…» и выдаёт случайную ещё не звучавшую в этой партии фразу.
+async function atmo(kind) {
+  const S = CUR();
+  const all = ATMO[kind];
+  if (!S || S.aborted || !all) return;
+  const used = G.atmoUsed;
+  let pool = all.filter((t) => !used.includes(t));
+  if (!pool.length) pool = all;                      // все фразы роли уже были (очень длинная партия) — по второму кругу
+  const text = pool[(Math.random() * pool.length) | 0];
+  used.push(text);
+  liveOnly({ type: "typing" });                      // точки — только вживую, в буфер не пишем
+  await sleep(ATMO_TYPING_MS);
+  if (S.aborted) return;
+  console.log(DIM(A(153, "   " + text)));
+  broadcast({ type: "atmo", text });
+}
+
 // ── Фазы ────────────────────────────────────────────────────────────────
 async function doNight() {
   narrator(`\n🌙 Ночь ${G.day}. Деревня засыпает.`);
@@ -737,6 +819,9 @@ async function doNight() {
   const maniac = alive.find((p) => p.role === "maniac");
   const doctor = alive.find((p) => p.role === "doctor");
   const kom = alive.find((p) => p.role === "komissar");
+
+  if (alive.some((p) => p.role === "civilian")) await atmo("civilian");
+  if (mafia.length) await atmo("mafia");
 
   const killable = alive.filter((p) => p.role !== "mafia");
   const humanMafia = mafia.find((m) => m.human);
@@ -772,6 +857,7 @@ async function doNight() {
   if (mt) secretAct(`🔪 мафия целится в: ${mt}`);
   let kt = null;
   if (maniac) {
+    await atmo("maniac");
     const prey = alive.filter((p) => p !== maniac);     // маньяк бьёт любого, кроме себя
     if (maniac.human) {
       const names = prey.map((p) => p.name);
@@ -782,6 +868,7 @@ async function doNight() {
   if (kt) secretAct(`🩸 маньяк (${maniac.name}) целится в: ${kt}`);
   let ds = null;
   if (doctor) {
+    await atmo("doctor");
     if (doctor.human) {   // человек-доктор сам выбирает кого лечить (себя можно) — каждую ночь, включая 1-ю
       const names = alive.map((p) => p.name);
       const ans = await awaitHuman("heal", { candidates: names, self: doctor.name });
@@ -791,6 +878,7 @@ async function doNight() {
   if (ds) secretAct(`🩺 доктор (${doctor.name}) лечит: ${ds}`);
   let checkName = null;
   if (kom) {
+    await atmo("komissar");
     const checkPool = alive.filter((p) => p !== kom && !G.priv[kom.name].checks.some((c) => c.name === p.name));
     if (checkPool.length) {
       const poolNames = checkPool.map((p) => p.name);
@@ -841,12 +929,13 @@ async function doNight() {
   G.lastDead.forEach((p) => { p.alive = false; p.revealed = p.role; });
 }
 
-function announceDead() {
+async function announceDead() {
+  await atmo("dawn");
   broadcast({ type: "day", day: G.day });
   narrator(`\n☀️ День ${G.day}.`);
   if (!G.lastDead.length) result("Ночь прошла тихо — все живы.");
   else {
-    G.lastDead.forEach((d) => { result(`Ночью убили ${d.name}. ${d.name} — ${roleName(d.revealed)}.`, d.revealed === "mafia" || d.revealed === "maniac"); broadcast({ type: "dead", name: d.name, role: d.revealed }); });
+    G.lastDead.forEach((d) => { result(`Ночная жертва: ${d.name} — ${roleName(d.revealed)}.`, d.revealed === "mafia" || d.revealed === "maniac"); broadcast({ type: "dead", name: d.name, role: d.revealed }); });
     G.lastOut = G.lastDead.map((d) => ({ name: d.name, role: d.revealed, how: "night" }));   // все погибшие за ночь
   }
   G.lastDead = [];
@@ -911,7 +1000,7 @@ function endGame() {
   const w = G.winner;
   const txt = w === "town" ? "🏆 ДЕРЕВНЯ ПОБЕДИЛА." : w === "mafia" ? "🔪 МАФИЯ ПОБЕДИЛА." : "🩸 МАНЬЯК ПОБЕДИЛ.";
   console.log("");
-  result(txt, w !== "town");
+  printLine({ kind: "result", text: txt, red: w !== "town" });   // только в консоль: игроку победу показывает "gameover" (раньше уходила дважды)
   console.log(DIM("Расклад: " + G.players.map((p) => `${p.name}=${roleName(p.role)}`).join(", ")));
   broadcast({ type: "gameover", text: txt });
 }
@@ -930,7 +1019,7 @@ function printCost() {
 async function gameLoop() {
   const humanName = CUR().humanName;
   const chars = shuffle(POOL).slice(0, 8);
-  CUR().G = { players: chars.map((c) => ({ ...c, alive: true, revealed: null })), priv: {}, day: 1, log: [],     lastDead: [], lastOut: null, winner: null };
+  CUR().G = { players: chars.map((c) => ({ ...c, alive: true, revealed: null })), priv: {}, day: 1, log: [], atmoUsed: [], lastDead: [], lastOut: null, winner: null };
   G.players.forEach((p) => (G.priv[p.name] = { checks: [], kills: [], saves: [], notes: [] }));
   const roles = shuffle(["mafia", "mafia", "maniac", "komissar", "doctor", "civilian", "civilian", "civilian"]);
   G.players.forEach((p, i) => (p.role = roles[i]));
@@ -971,7 +1060,8 @@ async function gameLoop() {
   while (guard++ < 15) {
     if (CUR().aborted) return;
     await doNight();
-    announceDead();
+    if (CUR().aborted) return;
+    await announceDead();
     if (checkWin()) break;
     if (CUR().aborted) return;
     await doDiscussion();
