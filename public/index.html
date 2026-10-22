@@ -192,6 +192,15 @@
   .narr{text-align:center;color:var(--narr);font-size:13px;padding:2px 0}
   .narr::before{content:"— "}.narr::after{content:" —"}
 
+  /* ночная/утренняя атмосфера рассказчика + точки «печатает…» */
+  .atmo{text-align:center;font-style:italic;color:var(--ink-soft);font-size:13px;line-height:1.45;padding:1px 14px}
+  .typing{display:flex;justify-content:center;gap:5px;padding:4px 0}
+  .typing i{width:6px;height:6px;border-radius:50%;background:var(--narr);opacity:.25;animation:tdot 1.1s infinite}
+  .typing i:nth-child(2){animation-delay:.18s}
+  .typing i:nth-child(3){animation-delay:.36s}
+  @keyframes tdot{0%,60%,100%{opacity:.25;transform:none}30%{opacity:1;transform:translateY(-3px)}}
+  @media (prefers-reduced-motion:reduce){.typing i{animation:none;opacity:.6}}
+
   .plaque{border:2px solid var(--line);padding:9px 11px;font-size:14px;line-height:1.5}
   .plaque .who{font-weight:700;margin-bottom:3px;display:flex;align-items:center;gap:7px}
   .plaque .who .tag{
@@ -609,9 +618,25 @@ function add(node){
 function el(cls,html){const d=document.createElement('div');d.className=cls;if(/\b(think|act)\b/.test(cls))d.className+=" secret";d.innerHTML=html;return d;}
 const esc=s=>String(s).replace(/[&<>]/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[m]));
 
+// точки «рассказчик печатает…»: одна штука внизу ленты, исчезает с приходом любого следующего события
+let typingEl=null;
+function showTyping(){
+  hideTyping();
+  typingEl=document.createElement('div');
+  typingEl.className='typing';
+  typingEl.innerHTML='<i></i><i></i><i></i>';
+  add(typingEl);
+}
+function hideTyping(){ if(typingEl){typingEl.remove();typingEl=null;} }
+
 // ── обработка событий от сервера ────────────────────────────────────────────
 function handle(e){
+  if(e.type!=="typing") hideTyping();
   switch(e.type){
+    case "typing":
+      showTyping();break;
+    case "atmo":
+      add(el("atmo",esc(e.text)));break;
     case "reset":
       players=[];feed.innerHTML="";render();dayLabel.textContent="День 1";dayChip.classList.remove('has-role');hideInput();break;
     case "eye_state":
@@ -826,6 +851,8 @@ function startDemo(){
       {name:"Кабан",c:179,role:"maniac"},{name:"Фурия",c:211,role:"civilian"},
       {name:"Кекс228",c:114,role:"doctor"},{name:"Трубач",c:111,role:"civilian"}]},
     {type:"narrator",text:"Ночь 1. Деревня засыпает."},
+    {type:"typing"},
+    {type:"atmo",text:"🔪 Маньяк надел перчатки. Не от холода."},
     {type:"pm",channel:"mafia",from:"Мирумир",text:"Тень, предлагаю убить Фурию — активные всегда опасны. Днём держимся порознь, изображаем мирных."},
     {type:"pm",channel:"mafia",from:"Тень",text:"Согласна. Днём я первая скажу, что она давила слишком уверенно."},
     {type:"act",text:"🔪 мафия целится в: Трубач"},
@@ -833,7 +860,7 @@ function startDemo(){
     {type:"act",text:"🔍 комиссар (Профессор) проверяет: Тень → МАФИЯ"},
     {type:"day",day:1},
     {type:"narrator",text:"День 1."},
-    {type:"result",text:"Ночью убили Трубач. Трубач — Мирный."},
+    {type:"result",text:"Ночная жертва: Трубач — Мирный."},
     {type:"dead",name:"Трубач"},
     {type:"narrator",text:"круг обсуждения 1/2"},
     {type:"think",name:"Кабан",text:"Трубач убит — он мирный. Один труп, всё ровно, доктор явно кого-то прикрыл. Тяну игру, я маньяк."},
