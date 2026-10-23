@@ -13,6 +13,7 @@ const SHOW_SECRETS = true;   // печатать роли, тайные мысл
 const HUMAN = process.env.HUMAN === "1" || process.env.HUMAN === "true"; // за столом сидит человек
 const HUMAN_ROLE = process.env.HUMAN_ROLE || null;   // какую роль дать человеку (komissar/doctor/mafia/…); пусто = случайная
 const PACING_MS = Number(process.env.PACING_MS ?? 10000);         // пауза между ходами в мс (0 = максимально быстро)
+const FREE_GAMES = Number(process.env.FREE_GAMES ?? 5);   // сколько партий в сутки (по МСК) можно ДОИГРАТЬ без VIP
 const ATMO_TYPING_MS = Number(process.env.ATMO_TYPING_MS ?? 1100); // сколько «печатает…» рассказчик перед ночной/утренней строкой
 const TEMPERATURE = 0.9;     // «живость» речи
 const MAX_TOKENS = 400;
@@ -61,8 +62,14 @@ const als = new AsyncLocalStorage();   // «ярлычок» текущей па
 const sessions = new Map();            // userId -> партия
 const CUR = () => als.getStore();      // партия текущего async-контекста
 
-function makeSession(userId, humanName, humanAvatar, humanBio) {
-  return { userId, humanName, humanAvatar, humanBio, premium: false, eyeUnlocked: false, G: null, clients: [], eventBuffer: [], pending: null, finishedAt: null };
+// Тип аккаунта для пульта: VIP до какого числа или сколько бесплатных партий уже сыграно сегодня
+function account(u) {
+  const vip = auth.isVip(u);
+  return { vip, vipUntil: vip ? u.vip_until : null, played: gamelog.finishedToday(u.id), limit: vip ? null : FREE_GAMES };
+}
+
+function makeSession(userId, humanName, humanAvatar, humanBio, vip) {
+  return { userId, humanName, humanAvatar, humanBio, premium: !!vip, eyeUnlocked: false, G: null, clients: [], eventBuffer: [], pending: null, finishedAt: null };
 }
 
 // ── Глаз бога: что игроку можно видеть ──
@@ -208,7 +215,8 @@ function startWeb() {
   });
 
   app.get("/me", (req, res) => {
-    res.json({ user: auth.userByToken(auth.tokenFromReq(req)) });
+    const user = auth.userByToken(auth.tokenFromReq(req));
+    res.json({ user, account: user ? account(user) : null });
   });
 
   // «Сыграть ещё»: выкидываем партию игрока — при перезагрузке /events заведёт новую
@@ -238,6 +246,7 @@ function startWeb() {
   app.post("/avatar", (req, res) => {
     const me = auth.userByToken(auth.tokenFromReq(req));
     if (!me) return res.status(401).json({ error: "Не вошёл" });
+    if (!auth.isVip(me)) return res.status(403).json({ error: "Выбор лица — в VIP 👑" });
     const r = auth.setAvatar(me.id, (req.body || {}).file);
     if (r.error) return res.status(400).json({ error: r.error });
     res.json({ user: r.user });
@@ -272,8 +281,18 @@ function startWeb() {
     if (!me) { res.end(); return; }                 // не вошёл — партии нет (замок и так не пустит)
     let S = sessions.get(me.id);
     const fresh = !S;
-    if (fresh) { S = makeSession(me.id, me.name, me.avatar, { age: me.bio_age, job: me.bio_job, hobby: me.bio_hobby }); sessions.set(me.id, S); }  // первая вкладка — заводим партию
-    res.write(`data: ${JSON.stringify({ type: "eye_state", open: eyeOpen(S), premium: !!S.premium })}\n\n`);   // можно ли глаз
+    if (fresh) {
+      // новая партия: бесплатный игрок, доигравший сегодня лимит, — партию не заводим, показываем плашку
+      const acct = account(me);
+      if (!acct.vip && acct.played >= acct.limit) {
+        res.write(`data: ${JSON.stringify({ type: "limit", ...acct })}\n\n`);
+        return;                                      // соединение держим открытым: иначе браузер станет переподключаться каждые 3 с
+      }
+      S = makeSession(me.id, me.name, me.avatar, { age: me.bio_age, job: me.bio_job, hobby: me.bio_hobby }, acct.vip);
+      S.vipUntil = acct.vipUntil;
+      sessions.set(me.id, S);                        // первая вкладка — заводим партию
+    }
+    res.write(`data: ${JSON.stringify({ type: "eye_state", open: eyeOpen(S), premium: !!S.premium, vipUntil: S.vipUntil || null })}\n\n`);   // можно ли глаз
     S.eventBuffer.forEach((ev) => sendTo(S, res, ev)); // проигрываем уже случившееся (секреты — только если глаз открыт)
     S.clients.push(res);
     S.emptySince = null;                              // кто-то смотрит партию
@@ -1059,7 +1078,7 @@ async function gameLoop() {
   const setup = {}; G.players.forEach((p) => (setup[p.role] = (setup[p.role] || 0) + 1));   // состав стола — публичен
   broadcast({ type: "roster", day: G.day, setup, players: G.players.map((p) => ({ name: p.name, c: p.c, av: p.av, role: p.role, alive: true, age: p.age, job: p.job, hobby: p.hobby, persona: p.persona })) });
   if (humanP) broadcast({ type: "you", name: humanP.name, role: humanP.role });
-  if (humanP && CUR().userId) CUR().gameId = gamelog.startGame(CUR().userId, humanP.name, humanP.role);   // журнал: партия началась
+  if (humanP && CUR().userId) CUR().gameId = gamelog.startGame(CUR().userId, humanP.name, humanP.role, CUR().premium);   // журнал: партия началась
 
   console.log(BOLD(`\n════ МАФИЯ · провайдер: ${PROVIDER} · модель: ${PROVIDERS[PROVIDER].model} ════`));
   if (SHOW_SECRETS) {
@@ -1090,7 +1109,11 @@ async function gameLoop() {
     gamelog.invalidateLeaderboard();
     const pts = gamelog.pointsFor(hp.role, G.winner, hp.alive);
     const lb = CUR().userId ? gamelog.leaderboard("week", CUR().userId, 0) : null;
-    broadcast({ type: "score", points: pts, rank: lb && lb.me ? lb.me.rank : null, total: lb ? lb.total : null });
+    // тип аккаунта — для строки под очками: VIP до какого числа / сколько бесплатных партий сыграно сегодня
+    const S = CUR();
+    const acct = S.premium ? { vip: true, vipUntil: S.vipUntil || null }
+      : { vip: false, played: S.userId ? gamelog.finishedToday(S.userId) : 0, limit: FREE_GAMES };
+    broadcast({ type: "score", points: pts, rank: lb && lb.me ? lb.me.rank : null, total: lb ? lb.total : null, acct });
   }
   CUR().finishedAt = Date.now();   // партия доиграна — метка для будущей уборки памяти
   printCost();
