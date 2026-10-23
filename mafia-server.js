@@ -83,7 +83,7 @@ function viewFor(S, ev) {
   if (eyeOpen(S)) return ev;
   if (ev.type === "think" || ev.type === "act") return null;
   const me = humanOf(S);
-  if (ev.type === "pm") return me && (ev.from === me.name || (ev.to || []).includes(me.name)) ? ev : null;
+  if (ev.type === "pm" || ev.type === "mafia_pick") return me && (ev.from === me.name || (ev.to || []).includes(me.name)) ? ev : null;
   if (ev.type === "roster") return { ...ev, players: ev.players.map((p) => {
     // своя роль, роли выбывших (они и так вскрыты) и напарник-мафия для игрока-мафии — видны; остальные скрыты
     const known = !me || p.name === me.name || p.alive === false || (me.role === "mafia" && p.role === "mafia");
@@ -1033,6 +1033,9 @@ async function doNight() {
       const names = killable.map((p) => p.name);
       const ans = await awaitHuman("kill_mafia", { candidates: names, suggest });
       mt = names.includes(ans.target) ? ans.target : (suggest || rnd(names));
+      // выбор объявляется в чате мафии: видят игрок и напарники (ИИ запоминают), остальным — никак
+      mafia.forEach((m) => G.priv[m.name].notes.push(`[ночь ${G.day}, чат мафии] ${humanMafia.name} выбирает жертву: ${mt}`));
+      broadcast({ type: "mafia_pick", from: humanMafia.name, target: mt, to: mafia.map((m) => m.name) });
       if (mates.length) {   // после выбора — можно шепнуть напарникам реплику, старший ответит (одна реплика)
         const ans2 = await awaitHuman("mafia_say", { to: mates.map((m) => m.name).join(", "), many: mates.length > 1, target: mt });
         const txt = (ans2 && ans2.text || "").toString().trim().slice(0, 200);
