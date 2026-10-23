@@ -8,6 +8,8 @@ const path = require("path");
 
 // База — простой файл рядом с игрой. Создастся сам при первом запуске.
 const db = new DatabaseSync(path.join(__dirname, "mafia.db"));
+// база общая с журналом и командой vip.js: если кто-то прямо сейчас пишет — подождать до 3 с, а не падать
+db.exec("PRAGMA busy_timeout = 3000");
 const fs = require("fs");
 const AVA_DIR = path.join(__dirname, "public", "avatars");
 
@@ -34,8 +36,10 @@ try { db.exec("ALTER TABLE users ADD COLUMN avatar TEXT"); } catch (_) {}
 for (const col of ["bio_age INTEGER", "bio_job TEXT", "bio_hobby TEXT"]) {
   try { db.exec(`ALTER TABLE users ADD COLUMN ${col}`); } catch (_) {}
 }
+// Миграция: VIP. vip_until = до какого момента действует (метка времени в мс); NULL = бесплатный.
+try { db.exec("ALTER TABLE users ADD COLUMN vip_until INTEGER"); } catch (_) {}
 // Какие поля пользователя отдаём наружу (пароль и прочее — никогда)
-const USER_COLS = "id, email, name, avatar, bio_age, bio_job, bio_hobby";
+const USER_COLS = "id, email, name, avatar, bio_age, bio_job, bio_hobby, vip_until";
 
 // Список .png в папке avatars/<sub>, в виде "<sub>/файл.png"
 function listDir(sub) {
@@ -182,4 +186,28 @@ function setBio(userId, bio) {
 // Лица для сетки выбора: две группы — мужские и женские (свободные, без ИИшных из characters)
 function listAvatars() { return { male: listDir("male"), female: listDir("female") }; }
 
-module.exports = { register, login, logout, userByToken, tokenFromReq, rename, setAvatar, listAvatars, setBio };
+// ── VIP ──
+// Действует, пока vip_until в будущем. Выдаётся командой на сервере (vip.js), позже — оплатой.
+function isVip(u) { return !!(u && u.vip_until && u.vip_until > Date.now()); }
+const DAY = 24 * 3600 * 1000;
+// Добавить дней: если VIP ещё идёт — продлеваем от его конца, иначе — от сейчас
+function vipAdd(email, days) {
+  email = normEmail(email); days = Number(days);
+  if (!Number.isInteger(days) || days < 1 || days > 3660) return { error: "Дней — целое число от 1 до 3660" };
+  const u = db.prepare("SELECT id, vip_until FROM users WHERE email = ?").get(email);
+  if (!u) return { error: "Нет игрока с такой почтой: " + email };
+  const from = u.vip_until && u.vip_until > Date.now() ? u.vip_until : Date.now();
+  db.prepare("UPDATE users SET vip_until = ? WHERE id = ?").run(from + days * DAY, u.id);
+  return { user: db.prepare(`SELECT ${USER_COLS} FROM users WHERE id = ?`).get(u.id) };
+}
+function vipOff(email) {
+  email = normEmail(email);
+  const u = db.prepare("SELECT id FROM users WHERE email = ?").get(email);
+  if (!u) return { error: "Нет игрока с такой почтой: " + email };
+  db.prepare("UPDATE users SET vip_until = NULL WHERE id = ?").run(u.id);
+  return { user: db.prepare(`SELECT ${USER_COLS} FROM users WHERE id = ?`).get(u.id) };
+}
+// все, у кого VIP когда-либо был выдан (и действующие, и истёкшие) — свежие сверху
+function vipList() { return db.prepare(`SELECT ${USER_COLS} FROM users WHERE vip_until IS NOT NULL ORDER BY vip_until DESC`).all(); }
+
+module.exports = { register, login, logout, userByToken, tokenFromReq, rename, setAvatar, listAvatars, setBio, isVip, vipAdd, vipOff, vipList };
