@@ -146,7 +146,7 @@
 
   /* ── ряд участников: сетка до 8 в ряд, дальше 2-й ряд (без скрола) ── */
   .seatsWrap{padding:5px}
-  .seats{display:grid;grid-template-columns:repeat(var(--cols,8),1fr);gap:3px}
+  .seats{display:grid;grid-template-columns:repeat(8,1fr);gap:3px}
   .seat{text-align:center;position:relative;min-width:0}
   .ava{
     width:100%;aspect-ratio:5/4;margin:0 auto;position:relative;overflow:hidden;
@@ -264,6 +264,9 @@
   .st-role:disabled{cursor:not-allowed}
   .st-vip.locked{opacity:.55;filter:grayscale(.5)}
   .st-vip.locked input[type=range]{cursor:not-allowed}
+  .st-vipline{margin-top:10px;font-size:12px;line-height:1.5;color:#7a5c12;text-align:center}
+  .st-buy{display:inline-block;margin-left:6px;font-family:inherit;font-size:11px;font-weight:700;padding:2px 8px;
+    background:var(--paper-2);color:var(--ink-soft);border:1px dashed var(--ink-soft);cursor:not-allowed}
   .st-note{font-size:12px;color:#7a5c12;text-align:center;margin-top:6px;line-height:1.45}
   .ava-lock{font-size:12px;color:#7a5c12;margin:2px 0 6px}
   .ava-grid.locked .ava-opt{opacity:.45;cursor:not-allowed;filter:grayscale(.6)}
@@ -531,7 +534,8 @@ function showInput(e){
     }
     inputbar.classList.add('on');
   } else if(kind==="visit"){
-    inputLbl.textContent="Ночь. К кому пойдёшь? Его ночной ход сорвётся";
+    const hist=(e.history||[]).map(v=>`н${v.night} — ${v.name} (${v.busy?"выходил(а)":"спал(а)"})`).join(", ");
+    inputLbl.textContent="Ночь. К кому пойдёшь? Его ночной ход сорвётся"+(hist?" · прошлые визиты: "+hist:"");
     voteMode.style.display="";
     voteReason.style.display="none";
     nameButtons(voteBtns, e.candidates, (name)=>{ hideInput(); sendAction({target:name}); });
@@ -630,7 +634,6 @@ sayText.addEventListener('keydown',(e)=>{ if(e.key==="Enter")submitSay(); });
 
 function render(){
   seatsEl.innerHTML="";
-  seatsEl.style.setProperty('--cols', players.length>8 ? Math.ceil(players.length/2) : 8);   // 9–12 игроков — два ровных ряда
   players.forEach(p=>{
     const seat=document.createElement('div');
     seat.className="seat"+(p.alive?"":" dead")+(p.name===myName?" me":"");
@@ -718,21 +721,30 @@ async function showSetup(){
   setVipBadge(vip?(a.vipUntil||1):null);
   setEyeAllowed(vip);                                 // у VIP глаз без замочка и до начала партии
   const prefs=loadPrefs();
-  let size=vip?Math.min(d.max,Math.max(d.min,+prefs.size||d.min)):d.max;   // бесплатному в витрине VIP показываем самый большой стол
+  let size=vip?Math.min(d.max,Math.max(d.min,+prefs.size||d.min)):d.max;   // размер стола — только у VIP
   let role=vip?(prefs.role||null):null;
   const box=document.createElement('div'); box.className='setupbox ev'; box.id='setupBox';
-  box.innerHTML=`<div class="st-title">🎲 Новая партия</div>`+
-    (vip?'':`<div class="st-block"><div class="st-size"><b>${d.min}</b> игроков</div><div class="st-chips">${chipsHtml(d.tables[d.min])}</div>
-      <button class="replay pixel" id="stPlay">▶ Играть</button></div>`)+
-    `<div class="st-block st-vip${vip?'':' locked'}">
-      <div class="st-vip-title">👑 VIP-стол${vip?'':'<span class="soon">скоро</span>'}</div>
+  if(!vip){
+    // бесплатному — ничего выбирать не надо: одна кнопка, а ниже мелко витрина VIP (текст — Иры)
+    box.innerHTML=`<button class="replay pixel" id="stPlay">▶ Играть</button>
+      <div class="st-vipline">👑 VIP: от 8 до 16 игроков, бомж, путана, смертник в команде
+        <button class="st-buy" disabled>Купить (скоро)</button></div>`;
+    add(box);
+    const p1=box.querySelector('#stPlay');
+    p1.onclick=async()=>{ p1.disabled=true; p1.textContent='Раздаём роли…';
+      try{ await fetch('/newgame',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'}); }catch(_){}
+      location.reload(); };
+    return;
+  }
+  box.innerHTML=`<div class="st-title">🎲 Новая партия</div>
+    <div class="st-block st-vip">
+      <div class="st-vip-title">👑 VIP-стол</div>
       <div class="st-size">Игроков: <b id="stN"></b></div>
-      <input type="range" id="stRange" min="${d.min}" max="${d.max}" step="1" value="${size}"${vip?'':' disabled'}>
+      <input type="range" id="stRange" min="${d.min}" max="${d.max}" step="1" value="${size}">
       <div class="st-chips" id="stChips"></div>
       <div class="st-lbl">Твоя роль</div>
       <div class="st-pick" id="stPick"></div>
-      ${vip?'<button class="replay pixel" id="stPlayVip">▶ Играть</button>'
-           :`<div class="st-note">Стол до ${d.max} игроков, путана и бомж, выбор своей роли, глаз бога с первой минуты</div>`}
+      <button class="replay pixel" id="stPlayVip">▶ Играть</button>
     </div>`;
   add(box);
   const rng=box.querySelector('#stRange');
@@ -757,7 +769,6 @@ async function showSetup(){
     try{ await fetch('/newgame',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({size:sz,role:rl})}); }catch(_){}
     location.reload();
   };
-  const p1=box.querySelector('#stPlay'); if(p1) p1.onclick=()=>go(d.min,null,p1);
   const p2=box.querySelector('#stPlayVip'); if(p2) p2.onclick=()=>go(+rng.value,role,p2);
 }
 
@@ -802,6 +813,8 @@ function handle(e){
       hideInput();break;
     case "check_result":
       add(el("plaque check",`<div class="who">🔍 Твоя проверка</div><div><b>${esc(e.name)}</b> — ${roleRu[e.role]||esc(e.role)}</div>`));break;
+    case "visit_result":
+      add(el("plaque check",`<div class="who">🌹 Твой визит</div><div>${esc(e.text.replace(/^🌹\s*/,""))}</div>`));break;
     case "watch_result":{
       const who=(e.seen||[]).length ? e.seen.map(x=>`<b style="color:${colorOf(x.name)}">${esc(x.name)}</b> ${esc(x.act)}`).join(", ")+"." : "никто не приходил.";
       add(el("plaque check",`<div class="who">🍾 Твоё дежурство</div><div>У дома <b>${esc(e.name)}</b>: ${who}</div>`));break;}
