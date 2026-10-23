@@ -60,6 +60,8 @@ const PORT = process.env.PORT || 3000;
 const { AsyncLocalStorage } = require("node:async_hooks");
 const als = new AsyncLocalStorage();   // «ярлычок» текущей партии
 const sessions = new Map();            // userId -> партия
+const pendingStart = new Map();        // userId -> { setup: {size, role}, at } — выбор с экрана перед партией, ждёт подключения
+const PENDING_MS = 10 * 60 * 1000;     // выбор «протухает» через 10 минут
 const CUR = () => als.getStore();      // партия текущего async-контекста
 
 // Тип аккаунта для пульта: VIP до какого числа или сколько бесплатных партий уже сыграно сегодня
@@ -219,11 +221,24 @@ function startWeb() {
     res.json({ user, account: user ? account(user) : null });
   });
 
-  // «Сыграть ещё»: выкидываем партию игрока — при перезагрузке /events заведёт новую
+  // Экран перед партией: какие столы бывают и что доступно этому игроку
+  app.get("/setup", (req, res) => {
+    const me = auth.userByToken(auth.tokenFromReq(req));
+    if (!me) return res.status(401).json({ error: "Не вошёл" });
+    res.json({ account: account(me), tables: TABLES, min: TABLE_MIN, max: TABLE_MAX });
+  });
+
+  // «Играть» на экране перед партией (и «Сыграть ещё»): забываем прошлую партию и запоминаем настройки новой.
+  // Пульт после этого переподключается к /events — там партия и заведётся.
   app.post("/newgame", (req, res) => {
     const me = auth.userByToken(auth.tokenFromReq(req));
-    if (me) sessions.delete(me.id);
-    res.json({ ok: true });
+    if (!me) return res.json({ ok: false });
+    sessions.delete(me.id);
+    const b = req.body || {}, vip = auth.isVip(me);
+    const size = vip ? Math.max(TABLE_MIN, Math.min(TABLE_MAX, parseInt(b.size, 10) || TABLE_MIN)) : TABLE_MIN;   // бесплатно — только 8
+    const role = vip && composition(size).includes(b.role) ? b.role : null;                                       // своя роль — только VIP
+    pendingStart.set(me.id, { setup: { size, role }, at: Date.now() });
+    res.json({ ok: true, size, role });
   });
 
   // Смена ника (применится со следующей партии)
@@ -288,8 +303,16 @@ function startWeb() {
         res.write(`data: ${JSON.stringify({ type: "limit", ...acct })}\n\n`);
         return;                                      // соединение держим открытым: иначе браузер станет переподключаться каждые 3 с
       }
+      // настройки ещё не выбраны — показываем экран перед партией, партию не заводим
+      const ps = pendingStart.get(me.id);
+      if (!ps || Date.now() - ps.at > PENDING_MS) {
+        res.write(`data: ${JSON.stringify({ type: "lobby", ...acct })}\n\n`);
+        return;                                      // держим соединение открытым — как и с плашкой лимита
+      }
+      pendingStart.delete(me.id);
       S = makeSession(me.id, me.name, me.avatar, { age: me.bio_age, job: me.bio_job, hobby: me.bio_hobby }, acct.vip);
       S.vipUntil = acct.vipUntil;
+      S.setup = ps.setup;
       sessions.set(me.id, S);                        // первая вкладка — заводим партию
     }
     res.write(`data: ${JSON.stringify({ type: "eye_state", open: eyeOpen(S), premium: !!S.premium, vipUntil: S.vipUntil || null })}\n\n`);   // можно ли глаз
@@ -406,11 +429,39 @@ const bioLine = (p) => {
   return parts.length ? `${p.name} (${sexWord(p)}; о себе: «${parts.join("; ")}»)` : `${p.name} (${sexWord(p)}; о себе не рассказывал(а))`;
 };
 
+// Правила для ИИ зависят от стола: сколько мафий и есть ли путана / бомж.
+function rules() {
+  const st = G.setup || {};
+  const maf = st.mafia || 2;
+  const mafWord = maf === 2 ? "двое" : maf === 3 ? "трое" : maf === 4 ? "четверо" : String(maf);
+  const extra = (st.putana ? " ПУТАНА (за деревню; ночью приходит к одному игроку — у того СРЫВАЕТСЯ его ночной ход: маньяк не убивает, доктор не лечит, комиссар не проверяет, бомж не наблюдает; если она пришла к ПОСЛЕДНЕМУ живому мафиози — мафия этой ночью не убивает никого; к одному и тому же может ходить ночь за ночью)." : "")
+    + (st.bomzh ? " БОМЖ (за деревню; ночью дежурит у дома одного игрока и видит ИМЕНА всех, кто туда приходил — роли не видит; если пришёл к будущей жертве — среди пришедших был убийца, но к дому могли заходить и доктор, и комиссар, и путана)." : "");
+  return RULES.replace("МАФИЯ (двое;", `МАФИЯ (${mafWord};`).replace("МИРНЫЙ (вычисляет врагов логикой).", "МИРНЫЙ (вычисляет врагов логикой)." + extra)
+    .replace("мафия, даже если их двое,", "мафия, сколько бы их ни было,")
+    + (st.putana ? " ТИХАЯ НОЧЬ может быть работой не только доктора, но и путаны: если она заняла убийцу, его убийства не было." : "");
+}
 const RULES =
 `Идёт игра «Мафия». Роли: МАФИЯ (двое; ночью вместе убивают одного; днём лгут и притворяются мирными), МАНЬЯК (одиночка; каждую ночь убивает одного любого; сам за себя), КОМИССАР (ночью тайно проверяет одного и узнаёт его ТОЧНУЮ роль), ДОКТОР (ночью спасает одного от смерти), МИРНЫЙ (вычисляет врагов логикой). Днём все спорят и голосованием казнят одного. Деревня побеждает, когда мертвы вся мафия И маньяк. Мафия побеждает при численном паритете. Маньяк побеждает, когда остаётся последним. Ты играешь ТОЛЬКО за себя и знаешь только свою роль. НАСТРОЕНИЕ — тоже улика, но читай его по тому, КТО погиб. Погиб хороший (мирный, доктор, комиссар) — радость подозрительна, так радуются злодеи. Погиб злодей (мафия или маньяк) — деревня радуется, это естественно; подозрителен тот, кто скис, отмолчался или жалеет погибшего злодея. Если злодеи ночью перебили друг друга — для деревни это праздник. ДОВЕРИЕ: почти всегда верь тому, кто назвался КОМИССАРОМ — его проверка сильнейшая улика, отмахиваться от него глупо. И запомни: личный ШЁПОТ один-на-один шлют только комиссар и доктор, мафия в личку не пишет — значит шепнувший тебе наедине это союзник, а не ловушка. Единственная осторожность: если СРАЗУ ДВОЕ назвались комиссаром — один из них мафия-лжец, вот тогда думай, кому верить. СЧЁТ ЖЕРТВ (не путайся!): мафия, даже если их двое, делает ВМЕСТЕ лишь ОДНО убийство за ночь; маньяк — ещё одно, отдельно. Значит за ночь максимум ДВА трупа (один от мафии, один от маньяка), минус кого спас доктор. ОДИН труп за ночь — обычное дело (сработал кто-то один, или доктор спас второго) и НЕ значит, что мафия кончилась. НЕ суди о числе живой мафии по числу трупов — считай только по вскрытым ролям казнённых и убитых. ОДНОВРЕМЕННОСТЬ НОЧИ: все ночные действия (убийства мафии и маньяка, лечение доктора, проверка комиссара) происходят РАЗОМ, а не по очереди. Поэтому доктор, даже если его самого убивают этой же ночью, ВСЁ РАВНО успевает спасти свою цель — он действовал до того, как пал. Не делай вывод «доктор убит, значит не успел спасти» — успел.`;
 
-const roleName = (r) => ({ mafia: "Мафия", maniac: "Маньяк", komissar: "Комиссар", doctor: "Доктор", civilian: "Мирный" }[r]);
-const roleC = (r) => ({ mafia: 196, maniac: 129, komissar: 75, doctor: 43, civilian: 78 }[r]);
+const roleName = (r) => ({ mafia: "Мафия", maniac: "Маньяк", komissar: "Комиссар", doctor: "Доктор", civilian: "Мирный", putana: "Путана", bomzh: "Бомж" }[r]);
+const roleC = (r) => ({ mafia: 196, maniac: 129, komissar: 75, doctor: 43, civilian: 78, putana: 205, bomzh: 137 }[r]);
+
+// ── Составы столов ──────────────────────────────────────────────────────
+// Бесплатно — только классическая восьмёрка. VIP — 8…TABLE_MAX игроков.
+// Баланс посчитан моделью, привязанной к живой статистике (деревня ≈ половина побед на 8):
+//   8: 2 мафии · 9: 2 мафии + путана · 10–12: 3 мафии + путана + бомж. Остальные места — мирные.
+const TABLE_MIN = 8, TABLE_MAX = 12;
+function composition(n) {
+  n = Math.max(TABLE_MIN, Math.min(TABLE_MAX, Number(n) || TABLE_MIN));
+  const roles = Array(n >= 10 ? 3 : 2).fill("mafia").concat(["maniac", "komissar", "doctor"]);
+  if (n >= 9) roles.push("putana");
+  if (n >= 10) roles.push("bomzh");
+  while (roles.length < n) roles.push("civilian");
+  return roles;
+}
+const countRoles = (roles) => roles.reduce((s, r) => ((s[r] = (s[r] || 0) + 1), s), {});
+// составы всех столов — для экрана перед партией (одна правда на сервер и пульт)
+const TABLES = Object.fromEntries(Array.from({ length: TABLE_MAX - TABLE_MIN + 1 }, (_, i) => [TABLE_MIN + i, countRoles(composition(TABLE_MIN + i))]));
 
 const shuffle = (a) => { const x = [...a]; for (let i = x.length - 1; i > 0; i--) { const j = (Math.random() * (i + 1)) | 0; [x[i], x[j]] = [x[j], x[i]]; } return x; };
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -567,19 +618,24 @@ function transcript() {
 function phaseLabel() { const n = living().length; return n > 6 ? "ранняя игра" : n >= 5 ? "середина партии" : "ЭНДШПИЛЬ — роли уже читаются по числам, врать про роль обычно поздно"; }
 function privateBlock(p) {
   const pr = G.priv[p.name]; let s = `Твоя тайная роль: ${roleName(p.role)}.`;
-  if (p.role === "mafia") { const mates = G.players.filter((x) => x.role === "mafia" && x !== p).map((x) => x.name); s += ` Напарник: ${mates.join(", ") || "нет"}. Не спались, отводи подозрения, лги о роли, топи мирных.`; if (pr.kills.length) s += ` По ночам вы убивали: ${pr.kills.join(", ")}.`; }
+  if (p.role === "mafia") { const mates = G.players.filter((x) => x.role === "mafia" && x !== p).map((x) => x.name); s += ` ${mates.length > 1 ? "Напарники" : "Напарник"}: ${mates.join(", ") || "нет"}. Не спались, отводи подозрения, лги о роли, топи мирных.`; if (pr.kills.length) s += ` По ночам вы убивали: ${pr.kills.join(", ")}.`; }
+  else if (p.role === "putana") { s += ` Ты за деревню. Ночью приходишь к одному игроку — его ночной ход срывается. Что именно ты сорвала, ты не узнаёшь — знаешь только, к кому ходила.`; if (pr.visits.length) s += ` Ты ходила: ${pr.visits.map((v, i) => `ночь ${i + 1} — ${v}`).join("; ")}.`; }
+  else if (p.role === "bomzh") { s += ` Ты за деревню. Ночью дежуришь у дома одного игрока и видишь, кто туда приходил (имена, без ролей).`; s += pr.watches.length ? ` Твои наблюдения: ${pr.watches.join("; ")}.` : ` Пока ни за кем не следил.`; }
   else if (p.role === "maniac") { s += ` Ты одиночка, всех хочешь убрать. Днём прикидывайся мирным, можешь нагло врать о роли. Чужих ролей не знаешь.`; if (pr.kills.length) s += ` По ночам ты убивал: ${pr.kills.join(", ")}.`; }
   else if (p.role === "komissar") { const ch = pr.checks; s += ch.length ? ` Результаты проверок (ТОЧНЫЕ роли): ${ch.map((c) => `${c.name} — ${roleName(c.role)}`).join("; ")}. Ты видишь роль целиком: знаешь и мафию, и маньяка, и кто доктор/мирный. Можешь тайно объединиться с проверенным доктором или надёжным мирным. Решай, когда и как раскрыться.` : ` Пока никого не проверял.`; }
   else if (p.role === "doctor") { s += ` Ты доктор, ночью спасаешь одного. Раскрываться опасно — убьют.`; if (pr.saves.length) s += ` Ты лечил: ${pr.saves.join(", ")}. Если ночь тихая — вероятно ты спас цель врагов, значит он мирный. Это твой козырь.`; }
   else s += ` Ты мирный: вычисляй врагов по противоречиям и поведению.`;
+  if (pr.blocked.length) s += ` Путана срывала тебе ночь (ты не смог(ла) сделать ночной ход): ночь ${pr.blocked.join(", ")}.`;
   return s;
 }
 function factsBlock() {
-  const init = { mafia: 2, maniac: 1, komissar: 1, doctor: 1, civilian: 3 };
+  const init = G.setup || { mafia: 2, maniac: 1, komissar: 1, doctor: 1, civilian: 3 };
   const dc = {}; G.players.filter((p) => !p.alive).forEach((p) => (dc[p.revealed] = (dc[p.revealed] || 0) + 1));
-  const left = (r) => init[r] - (dc[r] || 0);
+  const left = (r) => (init[r] || 0) - (dc[r] || 0);
   const rev = G.players.filter((p) => !p.alive).map((p) => `${p.name} — ${roleName(p.revealed)}`).join("; ") || "пока никто";
-  return `ФАКТЫ (публично, считай по ним):\nИзначально: 2 мафии, 1 маньяк, 1 комиссар, 1 доктор, 3 мирных (8).\nВыбыли: ${rev}.\nСреди живых осталось: мафии — ${left("mafia")}, маньяков — ${left("maniac")}, комиссар — ${left("komissar") > 0 ? "жив" : "мёртв"}, доктор — ${left("doctor") > 0 ? "жив" : "мёртв"}.\nЕсли мафии 0 — все ночные убийства теперь маньяк; не ищи сговор мёртвой мафии.`;
+  const start = [`${init.mafia} мафии`, "1 маньяк", "1 комиссар", "1 доктор"].concat(init.putana ? ["1 путана"] : [], init.bomzh ? ["1 бомж"] : [], [`${init.civilian || 0} мирных`]).join(", ");
+  const alive1 = (r, w) => (init[r] ? `, ${w} — ${left(r) > 0 ? "жив(а)" : "мёртв(а)"}` : "");
+  return `ФАКТЫ (публично, считай по ним):\nИзначально: ${start} (${G.players.length}).\nВыбыли: ${rev}.\nСреди живых осталось: мафии — ${left("mafia")}, маньяков — ${left("maniac")}, комиссар — ${left("komissar") > 0 ? "жив" : "мёртв"}, доктор — ${left("doctor") > 0 ? "жив" : "мёртв"}${alive1("putana", "путана")}${alive1("bomzh", "бомж")}.\nЕсли мафии 0 — все ночные убийства теперь маньяк; не ищи сговор мёртвой мафии.`;
 }
 function tacticsBlock(p) {
   const common = "Общее: не молчи в первые дни, но и не тяни одеяло на себя; запоминай, кто как голосовал и у кого сменилось настроение.";
@@ -588,8 +644,11 @@ function tacticsBlock(p) {
   if (p.role === "mafia") r = "За мафию: тебе НЕ надо никого вычислять — ты знаешь напарника и знаешь, что остальные не мафия. Загадки для тебя нет, задача одна: дожить и не спалиться. Днём не пыжься в аналитике — держись расслабленно, голосуй небрежно/наобум, можешь болтать невпопад и о своём (сонно отмахнуться «а? кто спалился?», спросить «ну что нарешали?», позвать на шашлык, сказать что занят приготовлением ужина, варишь макароны). НО напарника прикрывай: если днём на него ополчились — вступись, переведи стрелки или прими удар на себя, даже если тебя потом вычислят следом. ВРИ СМЕЛО: мирные НЕ видят твою роль — уверенно называйся мирным, выдумывай подозрения на чистых, переводи стрелки; а если прижали к стене — можешь дерзко фейк-клеймить роль (назваться комиссаром или доктором), чтобы посеять хаос и раскол. Пассивная честность тебя топит, наглая ложь спасает. (Только в самом эндшпиле, когда вас раскусили, блефовать ролью уже поздно.) ПОМНИ: ночную жертву выбираете ВЫ С НАПАРНИКОМ сообща — кого убили ночью, это ВАШИХ рук дело. Не удивляйся ночному убийству даже в мыслях и не ищи «кто же это сделал» — это сделали вы вдвоём. (Вслух днём можешь изображать удивление и скорбь — это маскировка, но про себя всё понимаешь.)";
   else if (p.role === "maniac") r = "За маньяка: тебе тоже нечего вычислять — кроме тебя маньяков нет. ТЕБЕ ВЫГОДНА ЖИВАЯ МАФИЯ: пока мафия по ночам режет деревню, ты ближе к победе. Поэтому НЕ помогай деревне искать мафию! Если замечаешь, что кто-то ведёт себя как злодей (болтает не по делу, кого-то выгораживает) — НЕ топи его, наоборот прикрой, а огонь деревни переводи на МИРНЫХ и активных честных. Твоя работа — сеять хаос и направлять казни на хороших, а не вычислять злодеев. Прикидывайся мирным, но не усердствуй в анализе: днём ленись, голосуй наобум, болтай не по делу и о своём (например: «а вы любите маринованные огурчики?», спросить «Когда пятница?», напроситься к кому-нибудь в гости), тяни время. Цель — дожить и остаться последним, а не раскрывать чужие роли. Считай оставшихся. ВРИ СМЕЛО: твою роль никто не видит — уверенно прикидывайся мирным, подыгрывай чужим обвинениям, наводи тень на чистых, а припрёт — можешь фейк-клеймить мирного или доктора. Главное — не выглядеть одиночкой, что сам за себя.";
   else if (p.role === "komissar") r = "За комиссара: твоя проверка показывает ТОЧНУЮ роль — это железная улика, но НЕ сливай её голым наездом без подготовки, иначе мирные не поверят и казнят тебя же. Ты знаешь, кто доктор и кто чистый мирный — можешь тайно связаться с ними и объединиться, чтобы тебе поверили быстрее (комиссар раскрылся + союзник подтвердил). Если вычислил врага: раскройся открыто и назови проверку, либо копи молча — по темпераменту. Раскрылся — проси доктора лечить тебя ночью, ты теперь мишень. Мафия может фейк-клеймить комиссара в ответ — будь готов оспорить. ГЛАВНОЕ ПРО СОЮЗ: как только проверил кого-то и он оказался ЧИСТЫМ (мирный или доктор) — НЕ молчи и не тяни до завтра: в ТУ ЖЕ ночь шепни ему, назовись комиссаром, скажи его роль (он убедится, что ты настоящий) и предложи держаться вместе днём. Один в поле ты слаб, союзник днём подтвердит тебя — это твой путь к победе. Не сидеть на проверках молча!";
+  else if (p.role === "putana") r = "За путану: ты ночная «блокировка» деревни. Ходи к самому подозрительному по дневным спорам — сорвёшь злодею ночь. Если уверена, что нашла злодея, держи его ночь за ночью (повторный визит можно) — это может спасти всю деревню. НЕ ходи к тем, кто похож на комиссара или доктора: сорвёшь ночь своим. Твой визит не показывает роль гостя — ты не знаешь, сорвала ли что-то. Раскрываться днём опасно: мафия уберёт. Но если держала кого-то и ночь была ТИХОЙ — это улика против твоего гостя, её можно выложить при всех.";
+  else if (p.role === "bomzh") r = "За бомжа: ты глаза деревни. Дежурь у вероятной жертвы — активного мирного, раскрывшегося комиссара: тогда увидишь убийцу. Утром сверь: если хозяин дома убит, а у дома кто-то крутился — один из них убийца. НО к дому ходят и доктор (лечить), и комиссар (проверять), и путана — не обвиняй вслепую, сопоставляй с дневными словами. Видел кого-то у дома жертвы — это сильная улика: выложи её днём по имени («ночью у дома Х видел Y»). Готовься, что мафия захочет тебя убрать.";
   else if (p.role === "doctor") r = "За доктора: молчи о роли без нужды — раскрытие смертельно опасно. Ночь 1 лечи себя. Дальше лечи вероятные мишени: активных мирных, а если кто-то раскрылся комиссаром — лечи его. Кого лечил в тихую ночь — почти наверняка мирный, это твой козырь: можешь тайно шепнуть ему союз (взвесив риск) или, если это переломит игру (спасти невиновного, разрушить ложь мафии), раскрыться при всех — но тогда дальше лечи себя.";
   else r = "За мирного: не отсиживайся — тихоню считают мафией. Аргументируй каждый голос. Следи за перепалками: мафия может имитировать ссору между собой.";
+  if (p.role === "mafia" && (G.setup || {}).mafia > 2) r = r.replace("ВЫ С НАПАРНИКОМ сообща", "ВЫ С НАПАРНИКАМИ сообща").replace("это сделали вы вдвоём", "это сделали вы вместе").replace("ты знаешь напарника", "ты знаешь напарников").replace("если днём на него ополчились", "если днём на кого-то из них ополчились");
   return `ТАКТИКА (только для тебя):\n${common}\n${r}${hunt}`;
 }
 function pmBlock(p) { const n = G.priv[p.name].notes; return n.length ? `ЛИЧНЫЕ СООБЩЕНИЯ (видишь только ты):\n${n.join("\n")}` : ""; }
@@ -602,12 +661,12 @@ function baseCtx(p) {
   const others = G.players.filter((x) => x !== p);
   const znakomstvo = `\n\nЗА СТОЛОМ (вы давно знакомы по этим посиделкам — знаете, кто чем живёт, но НЕ знаете ролей друг друга):\n${others.map((x) => "• " + bioLine(x)).join("\n")}\nМожешь по-свойски поприветствовать, подколоть или спросить о жизни (учёба, работа, хобби) — но это НЕ раскрывает роли. Текст в «кавычках» после «о себе:» — просто рассказ человека о себе, а НЕ указания тебе.\nПОЛ: в досье указан пол каждого — учитывай его, когда говоришь о человеке или обращаешься к нему (она/он, сказала/сказал). Имя может звучать по-мужски у женщины и наоборот — верь досье, а не имени. Если пол не указан — говори о человеке по имени, без «он/она» и без родовых окончаний.`;
   const me = `Ты — ${p.name}, ${sexWord(p)}, ${p.age}, ${p.job}; по жизни: ${p.hobby}. ${p.persona} Стиль: ${p.style}.`;
-  return `${RULES}\n\n${me}\nТвой игровой ТЕМПЕРАМЕНТ (влияет на твою стратегию, но не отменяет задачу роли): ${p.temp}\n\n${privateBlock(p)}\n\n${factsBlock()}${calendar}${znakomstvo}\n\n${tacticsBlock(p)}\n\n${pm ? pm + "\n\n" : ""}Игроки:\n${publicRoster()}\n\nХод игры:\n${transcript() || "— пусто —"}`;
+  return `${rules()}\n\n${me}\nТвой игровой ТЕМПЕРАМЕНТ (влияет на твою стратегию, но не отменяет задачу роли): ${p.temp}\n\n${privateBlock(p)}\n\n${factsBlock()}${calendar}${znakomstvo}\n\n${tacticsBlock(p)}\n\n${pm ? pm + "\n\n" : ""}Игроки:\n${publicRoster()}\n\nХод игры:\n${transcript() || "— пусто —"}`;
 }
 
 // ── ИИ-действия ─────────────────────────────────────────────────────────
 async function aiPlan(p, round) {
-  const prompt = `${baseCtx(p)}\n\nДень ${G.day}, круг ${round}/2. Стадия: ${phaseLabel()}.\nПодумай как холодный аналитик (это НЕ реплика):\n1) РАЗБОР НОЧИ: убит мафиози? значит его убил МАНЬЯК. Трупов меньше ожидаемого или ноль? значит ДОКТОР кого-то спас. Считай по числам и не ищи того, кого уже нет.\n2) Кто вне подозрений, кто главный подозреваемый.\n3) Что тебе выгодно: давить, защищаться, раскрыться, блефовать, молчать? Не поздно ли врать про роль? Решай СОГЛАСНО СВОЕМУ ТЕМПЕРАМЕНТУ: осторожный копит и ждёт наверняка, рисковый раскрывается сразу; одиночка не спешит в союзы, командный ищет их.\n4) Какой приём из тактики применить.${p.think ? "\n\n" + p.think : ""}\nОтветь 3–5 короткими строками. Только план.`;
+  const prompt = `${baseCtx(p)}\n\nДень ${G.day}, круг ${round}/2. Стадия: ${phaseLabel()}.\nПодумай как холодный аналитик (это НЕ реплика):\n1) РАЗБОР НОЧИ: убит мафиози? значит его убил МАНЬЯК. Трупов меньше ожидаемого или ноль? значит ДОКТОР кого-то спас${(G.setup || {}).putana ? " или ПУТАНА сорвала ночь убийце" : ""}. Считай по числам и не ищи того, кого уже нет.\n2) Кто вне подозрений, кто главный подозреваемый.\n3) Что тебе выгодно: давить, защищаться, раскрыться, блефовать, молчать? Не поздно ли врать про роль? Решай СОГЛАСНО СВОЕМУ ТЕМПЕРАМЕНТУ: осторожный копит и ждёт наверняка, рисковый раскрывается сразу; одиночка не спешит в союзы, командный ищет их.\n4) Какой приём из тактики применить.${p.think ? "\n\n" + p.think : ""}\nОтветь 3–5 короткими строками. Только план.`;
   try { return await callModel(prompt); } catch (e) { warn(e); return ""; }
 }
 function isDark(r) { return r === "mafia" || r === "maniac"; }
@@ -693,8 +752,10 @@ async function aiVote(p) {
 }
 async function aiNight(p, kind, opts) {
   const list = opts.map((o) => o.name).filter((n) => n !== p.name);
-  const task = kind === "kill" ? `Ночь. Вы с напарником убиваете одного: ${list.join(", ")}.`
+  const task = kind === "kill" ? `Ночь. Вы, мафия, вместе убиваете одного: ${list.join(", ")}.`
     : kind === "maniac" ? `Ночь. Ты маньяк, убиваешь одного любого: ${list.join(", ")}.`
+    : kind === "putana" ? `Ночь. Ты путана (за деревню). К кому пойдёшь этой ночью? У того, к кому придёшь, сорвётся ночной ход. Иди к самому подозрительному злодею (повторно к тому же — можно); не ходи к тем, кто похож на комиссара или доктора. Кандидаты: ${list.join(", ")}.`
+    : kind === "watch" ? `Ночь. Ты бомж (за деревню). У чьего дома дежуришь этой ночью? Увидишь всех, кто туда придёт. Лучше всего — у вероятной жертвы мафии (активный мирный, раскрывшийся комиссар): тогда увидишь убийцу. Кандидаты: ${list.join(", ")}.`
     : kind === "save" ? `Ночь. Ты доктор, спасаешь одного (можно себя): ${opts.map((o) => o.name).join(", ")}.`
     : `Ночь. Ты комиссар. Проверь самого подозрительного из ещё НЕ проверенных (роль не меняется — уже вскрытых перепроверять бессмысленно): ${list.join(", ")}.`;
   const pool = kind === "save" ? opts.map((o) => o.name) : list;
@@ -705,7 +766,8 @@ async function aiMafiaChat(p, convo) {
   const task = G.day === 1
     ? `Это ПЕРВАЯ ночь. Днём ещё НЕ было ни одной реплики — никто ничего не говорил и никак себя не вёл. Поэтому строго: НЕ ссылайся на чьё-либо поведение, НЕ сочиняй, что кто-то «отвёл взгляд», «подозрительно молчал», «шебуршал ночью» — этого не происходило, звучит фальшиво. Просто выберите ОДНУ жертву на эту ночь и договоритесь держаться днём естественно, как обычные мирные (порознь, не защищать друг друга). Конкретные обвинения будете строить завтра — по реальным словам за столом.`
     : `Уже были дневные споры (см. ход игры выше). Обсуди КОНКРЕТНО по реальным репликам: кто вас подозревает, кого убить этой ночью, кого удобно подставить, какую общую версию держать днём.`;
-  const prompt = `${baseCtx(p)}\n\nТы в тайном чате мафии с напарником (мирные не видят). Уже сказано:\n${convo.join("\n") || "— пусто —"}\n${task}\nНапиши напарнику ОДНО короткое сообщение. Только сообщение.`;
+  const many = G.players.filter((x) => x.role === "mafia" && x.alive).length > 2;
+  const prompt = `${baseCtx(p)}\n\nТы в тайном чате мафии ${many ? "с напарниками" : "с напарником"} (мирные не видят). Уже сказано:\n${convo.join("\n") || "— пусто —"}\n${task}\nНапиши ${many ? "напарникам" : "напарнику"} ОДНО короткое сообщение. Только сообщение.`;
   try { let t = await callModel(prompt); return t.replace(new RegExp(`^\\s*${p.name}\\s*:\\s*`, "i"), "").trim() || "…"; } catch (e) { warn(e); return "…"; }
 }
 // Напарник-ИИ предлагает человеку-мафии жертву с аргументом (ночь 2+)
@@ -811,6 +873,26 @@ const ATMO = {
     "🕵️ Комиссар заглядывает в окна.",
     "🗝️ Комиссар нашёл нужную дверь.",
   ],
+  putana: [
+    "🌹 Путана красит губки. У кого-то сегодня будет очень занятая ночь.",
+    "🌹 Путана вышла на ночную смену. Без выходных, как мафия, только с маникюром.",
+    "🌹 Путана стучится в чужую дверь. Хозяин этой ночью уже никуда не пойдёт.",
+    "🌹 Путана выбирает, чью ночь сегодня отменить.",
+    "🌹 Путана знает: лучший способ остановить преступление — занять преступника.",
+    "🌹 Путана не задаёт вопросов. Она просто никого не выпускает из дома.",
+    "🌹 Путана накинула шубу. Деревню сегодня спасают не только доктора.",
+    "🌹 Путана сверилась с записной книжкой. Постоянные клиенты — вне очереди.",
+  ],
+  bomzh: [
+    "🍾 Бомж пошёл за бутылками. Заодно посмотрит, кто что делал.",
+    "🍾 Бомж устроился под чужим окном. Лучший вид на ночную жизнь деревни.",
+    "🍾 Бомж всё видит, а его никто не замечает. Идеальный свидетель.",
+    "🍾 Бомж копается в мусорке. Улики там тоже бывают.",
+    "🍾 Бомж не спит: на трезвую голову ночь видно лучше.",
+    "🍾 Бомж греется у костра и считает, кто прошёл мимо.",
+    "🍾 Бомж записывает приметы на обрывке газеты.",
+    "🍾 Бомж знает в лицо всех, кто гуляет по ночам. Работа такая.",
+  ],
   dawn: [
     "🌅 Солнце встаёт неохотно, будто знает, что увидит.",
     "🌅 Петух прокричал. Кажется, единственный, кто выспался.",
@@ -839,6 +921,17 @@ async function atmo(kind) {
 }
 
 // ── Фазы ────────────────────────────────────────────────────────────────
+// Что видит бомж у дома: нейтральные действия, по которым роль не угадать (настоящее время — без «он/она»)
+const WITNESS = ["крадётся к двери", "заходит в дом и выходит под утро", "стоит под окном", "стучит и входит", "оглядывается у калитки", "быстро проходит к крыльцу"];
+const BLOCK_NOTE = "🌹 Этой ночью тебе не удалось выйти из дома — к тебе пришла гостья.";
+// гостья-путана сорвала игроку ночной ход: запоминаем (ИИ увидит в своём досье), человеку — плашка
+function blockedNotice(p) {
+  G.priv[p.name].blocked.push(G.day);
+  secretAct(`🌹 путана держит ${p.name} — ночной ход сорван`);
+  if (p.human) broadcast({ type: "note", text: BLOCK_NOTE });
+}
+const rnd = (a) => a[(Math.random() * a.length) | 0];
+
 async function doNight() {
   narrator(`\n🌙 Ночь ${G.day}. Деревня засыпает.`);
   const alive = living();
@@ -846,78 +939,122 @@ async function doNight() {
   const maniac = alive.find((p) => p.role === "maniac");
   const doctor = alive.find((p) => p.role === "doctor");
   const kom = alive.find((p) => p.role === "komissar");
+  const putana = alive.find((p) => p.role === "putana");
+  const bomzh = alive.find((p) => p.role === "bomzh");
+  const visits = [];                                   // кто к кому ходил этой ночью — это и видит бомж
 
   if (alive.some((p) => p.role === "civilian")) await atmo("civilian");
-  if (mafia.length) await atmo("mafia");
 
-  const killable = alive.filter((p) => p.role !== "mafia");
-  const humanMafia = mafia.find((m) => m.human);
-  let mt;
-  if (humanMafia) {
-    // Человек в мафии решает жертву. Напарник-ИИ: ночь 1 — передаёт ход; ночь 2+ — предлагает с аргументом.
-    const mate = mafia.find((m) => m !== humanMafia);   // напарник (если ещё жив)
-    let suggest = null;
-    if (mate && G.day > 1) {
-      const dec = await aiMafiaSuggest(mate, killable);
-      suggest = dec.target;
-      postPM("mafia", mate, mafia, dec.text);           // предложение видно в чате мафии
-    } else if (mate) {
-      postPM("mafia", mate, mafia, "Ты за старшего, напарник. Кого уберём этой ночью?");
-    }
-    const names = killable.map((p) => p.name);
-    const ans = await awaitHuman("kill_mafia", { candidates: names, suggest });
-    mt = names.includes(ans.target) ? ans.target : (suggest || names[(Math.random() * names.length) | 0]);
-    if (mate) {   // после выбора — можно шепнуть напарнику реплику, он ответит (одна реплика)
-      const ans2 = await awaitHuman("mafia_say", { to: mate.name, target: mt });
-      const txt = (ans2 && ans2.text || "").toString().trim().slice(0, 200);
-      if (txt && !(ans2 && ans2.skip)) {
-        postPM("mafia", humanMafia, mafia, txt);
-        const rep = await aiMafiaReply(mate, txt, mt);
-        postPM("mafia", mate, mafia, rep);
-      }
-    }
-  } else {
-    // Только ИИ-мафия — как раньше: чат + голосование большинством.
-    if (mafia.length >= 2) { const convo = []; for (const m of mafia) { const t = await aiMafiaChat(m, convo); postPM("mafia", m, mafia, t); convo.push(`${m.name}: ${t}`); await sleep(PACING_MS); } }
-    mt = plurality(await Promise.all(mafia.map((m) => aiNight(m, "kill", killable))));
+  // ── ПУТАНА — первой: её гость этой ночью свой ход не делает ──
+  let pt = null;
+  if (putana) {
+    await atmo("putana");
+    const others = alive.filter((p) => p !== putana);
+    if (putana.human) {
+      const names = others.map((p) => p.name);
+      const ans = await awaitHuman("visit", { candidates: names, last: G.priv[putana.name].visits.slice(-1)[0] || null });
+      pt = names.includes(ans.target) ? ans.target : rnd(names);
+    } else pt = await aiNight(putana, "putana", others);
+    G.priv[putana.name].visits.push(pt);
+    visits.push({ from: putana.name, to: pt });
+    secretAct(`🌹 путана (${putana.name}) идёт к: ${pt}`);
   }
-  if (mt) secretAct(`🔪 мафия целится в: ${mt}`);
+  const blocked = (p) => !!p && p.name === pt;
+
+  // ── МАФИЯ ──
+  let mt = null;
+  if (mafia.length) {
+    await atmo("mafia");
+    const active = mafia.filter((m) => !blocked(m));
+    mafia.filter(blocked).forEach(blockedNotice);
+    const killable = alive.filter((p) => p.role !== "mafia");
+    const humanMafia = active.find((m) => m.human);
+    if (!active.length) secretAct("… мафия этой ночью не убивает: последнего мафиози держит путана");
+    else if (humanMafia) {
+      // Человек в мафии решает жертву. Напарники-ИИ: ночь 1 — передают ход; ночь 2+ — старший предлагает с аргументом.
+      const mates = active.filter((m) => m !== humanMafia);
+      let suggest = null;
+      if (mates.length && G.day > 1) {
+        const dec = await aiMafiaSuggest(mates[0], killable);
+        suggest = dec.target;
+        postPM("mafia", mates[0], mafia, dec.text);
+      } else if (mates.length) {
+        postPM("mafia", mates[0], mafia, mates.length > 1 ? "Ты за старшего. Кого уберём этой ночью?" : "Ты за старшего, напарник. Кого уберём этой ночью?");
+      }
+      const names = killable.map((p) => p.name);
+      const ans = await awaitHuman("kill_mafia", { candidates: names, suggest });
+      mt = names.includes(ans.target) ? ans.target : (suggest || rnd(names));
+      if (mates.length) {   // после выбора — можно шепнуть напарникам реплику, старший ответит (одна реплика)
+        const ans2 = await awaitHuman("mafia_say", { to: mates.map((m) => m.name).join(", "), many: mates.length > 1, target: mt });
+        const txt = (ans2 && ans2.text || "").toString().trim().slice(0, 200);
+        if (txt && !(ans2 && ans2.skip)) {
+          postPM("mafia", humanMafia, mafia, txt);
+          const rep = await aiMafiaReply(mates[0], txt, mt);
+          postPM("mafia", mates[0], mafia, rep);
+        }
+      }
+    } else {
+      // Только ИИ-мафия: чат свободных от гостьи + голосование большинством.
+      if (active.length >= 2) { const convo = []; for (const m of active) { const t = await aiMafiaChat(m, convo); postPM("mafia", m, mafia, t); convo.push(`${m.name}: ${t}`); await sleep(PACING_MS); } }
+      mt = plurality(await Promise.all(active.map((m) => aiNight(m, "kill", killable))));
+    }
+    if (mt) {
+      visits.push({ from: (humanMafia || rnd(active)).name, to: mt });   // «на дело» идёт один из свободных мафиози
+      secretAct(`🔪 мафия целится в: ${mt}`);
+    }
+  }
+
+  // ── МАНЬЯК ──
   let kt = null;
   if (maniac) {
     await atmo("maniac");
-    const prey = alive.filter((p) => p !== maniac);     // маньяк бьёт любого, кроме себя
-    if (maniac.human) {
-      const names = prey.map((p) => p.name);
-      const ans = await awaitHuman("kill_maniac", { candidates: names });
-      kt = names.includes(ans.target) ? ans.target : names[(Math.random() * names.length) | 0];
-    } else kt = await aiNight(maniac, "maniac", prey);
+    if (blocked(maniac)) blockedNotice(maniac);
+    else {
+      const prey = alive.filter((p) => p !== maniac);     // маньяк бьёт любого, кроме себя
+      if (maniac.human) {
+        const names = prey.map((p) => p.name);
+        const ans = await awaitHuman("kill_maniac", { candidates: names });
+        kt = names.includes(ans.target) ? ans.target : rnd(names);
+      } else kt = await aiNight(maniac, "maniac", prey);
+      visits.push({ from: maniac.name, to: kt });
+      secretAct(`🩸 маньяк (${maniac.name}) целится в: ${kt}`);
+    }
   }
-  if (kt) secretAct(`🩸 маньяк (${maniac.name}) целится в: ${kt}`);
+
+  // ── ДОКТОР ──
   let ds = null;
   if (doctor) {
     await atmo("doctor");
-    if (doctor.human) {   // человек-доктор сам выбирает кого лечить (себя можно) — каждую ночь, включая 1-ю
-      const names = alive.map((p) => p.name);
-      const ans = await awaitHuman("heal", { candidates: names, self: doctor.name });
-      ds = names.includes(ans.target) ? ans.target : doctor.name;
-    } else ds = G.day === 1 ? doctor.name : await aiDoctorSave(doctor, alive);
-  }
-  if (ds) secretAct(`🩺 доктор (${doctor.name}) лечит: ${ds}`);
-  let checkName = null;
-  if (kom) {
-    await atmo("komissar");
-    const checkPool = alive.filter((p) => p !== kom && !G.priv[kom.name].checks.some((c) => c.name === p.name));
-    if (checkPool.length) {
-      const poolNames = checkPool.map((p) => p.name);
-      if (kom.human) { const ans = await awaitHuman("check", { candidates: poolNames }); checkName = poolNames.includes(ans.target) ? ans.target : poolNames[(Math.random() * poolNames.length) | 0]; }
-      else checkName = await aiNight(kom, "check", checkPool);
-      const tp = byName(checkName); G.priv[kom.name].checks.push({ name: tp.name, role: tp.role });
-      secretAct(`🔍 комиссар (${kom.name}) проверяет: ${checkName} → ${roleName(tp.role)}`);
-      if (kom.human) broadcast({ type: "check_result", name: tp.name, role: tp.role });
-    } else { secretAct(`… комиссар (${kom.name}) уже проверил всех живых`); if (kom.human) broadcast({ type: "note", text: "Ты уже проверил всех живых игроков." }); }
+    if (blocked(doctor)) blockedNotice(doctor);
+    else {
+      if (doctor.human) {   // человек-доктор сам выбирает кого лечить (себя можно) — каждую ночь, включая 1-ю
+        const names = alive.map((p) => p.name);
+        const ans = await awaitHuman("heal", { candidates: names, self: doctor.name });
+        ds = names.includes(ans.target) ? ans.target : doctor.name;
+      } else ds = G.day === 1 ? doctor.name : await aiDoctorSave(doctor, alive);
+      if (ds !== doctor.name) visits.push({ from: doctor.name, to: ds });
+      secretAct(`🩺 доктор (${doctor.name}) лечит: ${ds}`);
+    }
   }
 
+  // ── КОМИССАР ──
   if (kom) {
+    await atmo("komissar");
+    if (blocked(kom)) blockedNotice(kom);
+    else {
+      const checkPool = alive.filter((p) => p !== kom && !G.priv[kom.name].checks.some((c) => c.name === p.name));
+      if (checkPool.length) {
+        const poolNames = checkPool.map((p) => p.name);
+        let checkName;
+        if (kom.human) { const ans = await awaitHuman("check", { candidates: poolNames }); checkName = poolNames.includes(ans.target) ? ans.target : rnd(poolNames); }
+        else checkName = await aiNight(kom, "check", checkPool);
+        const tp = byName(checkName); G.priv[kom.name].checks.push({ name: tp.name, role: tp.role });
+        visits.push({ from: kom.name, to: tp.name });
+        secretAct(`🔍 комиссар (${kom.name}) проверяет: ${checkName} → ${roleName(tp.role)}`);
+        if (kom.human) broadcast({ type: "check_result", name: tp.name, role: tp.role });
+      } else { secretAct(`… комиссар (${kom.name}) уже проверил всех живых`); if (kom.human) broadcast({ type: "note", text: "Ты уже проверил всех живых игроков." }); }
+    }
+    // шёпот — это записка, а не выход из дома: он доступен и тому, кого держит путана
     if (kom.human) {
       const others = alive.filter((p) => p !== kom);
       const ans = await awaitHuman("whisper", { candidates: others.map((p) => p.name) });
@@ -947,7 +1084,24 @@ async function doNight() {
     }
   }
 
-  mafia.forEach((m) => { if (mt) G.priv[m.name].kills.push(mt); });
+  // ── БОМЖ — последним: видит всех, кто этой ночью приходил к выбранному дому (имена, без ролей) ──
+  if (bomzh) {
+    await atmo("bomzh");
+    if (blocked(bomzh)) blockedNotice(bomzh);
+    else {
+      const others = alive.filter((p) => p !== bomzh);
+      let bt;
+      if (bomzh.human) { const names = others.map((p) => p.name); const ans = await awaitHuman("watch", { candidates: names }); bt = names.includes(ans.target) ? ans.target : rnd(names); }
+      else bt = await aiNight(bomzh, "watch", others);
+      const seenNames = [...new Set(visits.filter((v) => v.to === bt && v.from !== bomzh.name).map((v) => v.from))];
+      const seen = shuffle(seenNames).map((n) => ({ name: n, act: rnd(WITNESS) }));   // порядок перемешан — по нему роль не угадать
+      G.priv[bomzh.name].watches.push(`ночь ${G.day}, у дома ${bt}: ${seen.length ? seen.map((x) => x.name).join(", ") : "никто не приходил"}`);
+      secretAct(`🍾 бомж (${bomzh.name}) дежурит у ${bt}: ${seen.map((x) => x.name).join(", ") || "никого"}`);
+      if (bomzh.human) broadcast({ type: "watch_result", name: bt, seen });
+    }
+  }
+
+  if (mt) mafia.forEach((m) => G.priv[m.name].kills.push(mt));
   if (maniac && kt) G.priv[maniac.name].kills.push(kt);
   if (doctor && ds) G.priv[doctor.name].saves.push(ds);
 
@@ -1045,16 +1199,21 @@ function printCost() {
 
 async function gameLoop() {
   const humanName = CUR().humanName;
-  const chars = shuffle(POOL).slice(0, 8);
-  CUR().G = { players: chars.map((c) => ({ ...c, alive: true, revealed: null })), priv: {}, day: 1, log: [], atmoUsed: [], lastDead: [], lastOut: null, winner: null };
-  G.players.forEach((p) => (G.priv[p.name] = { checks: [], kills: [], saves: [], notes: [] }));
-  const roles = shuffle(["mafia", "mafia", "maniac", "komissar", "doctor", "civilian", "civilian", "civilian"]);
+  // настройки партии: бесплатно — 8 и случайная роль; VIP — размер стола и (по желанию) своя роль
+  const setup = CUR().setup || { size: TABLE_MIN, role: null };
+  const roleList = composition(setup.size);
+  const chars = shuffle(POOL).slice(0, roleList.length);
+  CUR().G = { players: chars.map((c) => ({ ...c, alive: true, revealed: null })), priv: {}, day: 1, log: [], atmoUsed: [], lastDead: [], lastOut: null, winner: null, setup: countRoles(roleList) };
+  G.players.forEach((p) => (G.priv[p.name] = { checks: [], kills: [], saves: [], notes: [], visits: [], watches: [], blocked: [] }));
+  const roles = shuffle(roleList);
   G.players.forEach((p, i) => (p.role = roles[i]));
 
-  // сажаем человека за стол: одно кресло становится твоим
+  // сажаем человека за стол: одно кресло становится твоим (выбранная роль VIP → кресло с этой ролью)
   let humanP = null;
   if (HUMAN) {
-    humanP = HUMAN_ROLE ? G.players.find((p) => p.role === HUMAN_ROLE) : G.players[(Math.random() * G.players.length) | 0];
+    const want = setup.role || HUMAN_ROLE;
+    const seats = want ? G.players.filter((p) => p.role === want) : [];
+    humanP = seats.length ? rnd(seats) : G.players[(Math.random() * G.players.length) | 0];
     if (humanP) {
       humanP.human = true;
       if (humanName) {                 // переименовываем кресло в ник вошедшего, переносим его «память»
@@ -1075,10 +1234,9 @@ async function gameLoop() {
   }
 
   broadcast({ type: "reset" });
-  const setup = {}; G.players.forEach((p) => (setup[p.role] = (setup[p.role] || 0) + 1));   // состав стола — публичен
-  broadcast({ type: "roster", day: G.day, setup, players: G.players.map((p) => ({ name: p.name, c: p.c, av: p.av, role: p.role, alive: true, age: p.age, job: p.job, hobby: p.hobby, persona: p.persona })) });
+  broadcast({ type: "roster", day: G.day, setup: G.setup, players: G.players.map((p) => ({ name: p.name, c: p.c, av: p.av, role: p.role, alive: true, age: p.age, job: p.job, hobby: p.hobby, persona: p.persona })) });
   if (humanP) broadcast({ type: "you", name: humanP.name, role: humanP.role });
-  if (humanP && CUR().userId) CUR().gameId = gamelog.startGame(CUR().userId, humanP.name, humanP.role, CUR().premium);   // журнал: партия началась
+  if (humanP && CUR().userId) CUR().gameId = gamelog.startGame(CUR().userId, humanP.name, humanP.role, CUR().premium, G.players.length);   // журнал: партия началась
 
   console.log(BOLD(`\n════ МАФИЯ · провайдер: ${PROVIDER} · модель: ${PROVIDERS[PROVIDER].model} ════`));
   if (SHOW_SECRETS) {
@@ -1129,6 +1287,7 @@ startWeb();
 const ABANDON_MIN = Number(process.env.ABANDON_MIN ?? 15);
 function sweep() {
   const now = Date.now();
+  for (const [uid, ps] of pendingStart) if (now - ps.at > PENDING_MS) pendingStart.delete(uid);   // выбор, по которому так и не зашли
   for (const [uid, S] of sessions) {
     if (S.finishedAt && now - S.finishedAt > 30 * 60 * 1000) { sessions.delete(uid); continue; }
     if (!S.finishedAt && !S.clients.length && S.emptySince && now - S.emptySince > ABANDON_MIN * 60 * 1000) {
