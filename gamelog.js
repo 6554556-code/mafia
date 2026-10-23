@@ -48,9 +48,12 @@ function safe(fn) {
   return (...a) => { try { return fn(...a); } catch (e) { console.error("журнал партий:", e.message); return null; } };
 }
 
-const startGame = safe((userId, userName, role) =>
-  Number(db.prepare("INSERT INTO games (user_id, user_name, role, started) VALUES (?, ?, ?, ?)")
-    .run(userId, userName, role, Date.now()).lastInsertRowid));
+// Миграция: была ли партия сыграна в VIP (1) или бесплатно (0). Старые партии — NULL (до VIP, значит бесплатные).
+try { db.exec("ALTER TABLE games ADD COLUMN vip INTEGER"); } catch (_) {}
+
+const startGame = safe((userId, userName, role, vip) =>
+  Number(db.prepare("INSERT INTO games (user_id, user_name, role, started, vip) VALUES (?, ?, ?, ?, ?)")
+    .run(userId, userName, role, Date.now(), vip ? 1 : 0).lastInsertRowid));
 
 const logMsg = safe((gameId, userId, day, kind, target, text) => {
   if (!gameId) return;
@@ -131,4 +134,17 @@ function leaderboard(period, userId, top = 20) {
 }
 function invalidateLeaderboard() { lbCache.key = ""; }
 
-module.exports = { db, startGame, logMsg, finishGame, logAiCall, pointsFor, leaderboard, invalidateLeaderboard, weekStart };
+// ── Дневной лимит бесплатных партий ──
+// Начало текущих суток по Москве (00:00 МСК)
+function dayStart(now = Date.now()) {
+  const MSK = 3 * 3600e3;
+  const d = new Date(now + MSK);
+  return Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()) - MSK;
+}
+// Сколько БЕСПЛАТНЫХ партий игрок ДОИГРАЛ сегодня (по моменту окончания). Брошенные и VIP-партии не считаются.
+function finishedToday(userId) {
+  try { return db.prepare("SELECT COUNT(*) AS n FROM games WHERE user_id = ? AND finished >= ? AND (vip IS NULL OR vip = 0)").get(userId, dayStart()).n; }
+  catch (e) { console.error("журнал партий:", e.message); return 0; }   // журнал сломался — лимит не мешает играть
+}
+
+module.exports = { db, startGame, logMsg, finishGame, logAiCall, pointsFor, leaderboard, invalidateLeaderboard, weekStart, dayStart, finishedToday };
