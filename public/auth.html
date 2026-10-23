@@ -82,6 +82,12 @@
   .msg{margin-top:14px;padding:9px 10px;font-size:13px;display:none}
   .msg.err{display:block;background:var(--red-bg);border:2px solid var(--red-br);color:var(--red)}
 
+  /* 18+ — значок в углу заставки и строка под кнопкой регистрации */
+  .age18{position:absolute;left:3%;top:2%;z-index:2;font-family:var(--ui-font);font-weight:700;font-size:clamp(12px,3.4vw,16px);
+    color:#fff;background:rgba(181,53,44,.92);border:2px solid #fff;border-radius:50%;
+    width:2.9em;height:2.9em;display:grid;place-items:center;box-shadow:0 2px 8px rgba(0,0,0,.5);pointer-events:none}
+  .agree{margin-top:10px;font-size:12px;line-height:1.45;color:var(--ink-soft);text-align:center}
+
   /* правила */
   .rules h2{font-size:15px;margin:16px 0 6px;letter-spacing:.3px}
   .rules p{font-size:14px;line-height:1.55;margin:0 0 8px}
@@ -95,6 +101,7 @@
 
   <main class="splash">
     <img src="img/splash.jpg" alt="МАФИЯ: ночной город, мафиози в белом костюме, роковая дама и бродяга">
+    <div class="age18" title="Игра для взрослых">18+</div>
     <button class="hot hot-login" aria-label="Вход" onclick="openSheet('auth')"></button>
     <button class="hot hot-rules" aria-label="Правила" onclick="openSheet('rules')"></button>
   </main>
@@ -122,6 +129,7 @@
       <input id="password" type="password" autocomplete="current-password" placeholder="минимум 6 символов">
 
       <button class="btn" id="submit">ВОЙТИ</button>
+      <div class="agree" id="agree18" style="display:none">Игра 18+: убийства, маньяки, мат и чёрный юмор. Регистрируясь, ты подтверждаешь, что тебе есть 18 лет.</div>
       <div class="msg" id="msg"></div>
     </div>
   </div>
@@ -176,6 +184,7 @@
     $("tabLogin").classList.toggle("on", m==="login");
     $("tabReg").classList.toggle("on", m==="register");
     nameRow.style.display = m==="register" ? "block" : "none";
+    $("agree18").style.display = m==="register" ? "block" : "none";
     btn.textContent = m==="register" ? "СОЗДАТЬ И ИГРАТЬ" : "ВОЙТИ";
     $("password").setAttribute("autocomplete", m==="register" ? "new-password" : "current-password");
     hideMsg();
