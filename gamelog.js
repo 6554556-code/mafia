@@ -52,6 +52,8 @@ function safe(fn) {
 try { db.exec("ALTER TABLE games ADD COLUMN vip INTEGER"); } catch (_) {}
 // Миграция: сколько игроков было за столом. Старые партии — NULL (это была восьмёрка).
 try { db.exec("ALTER TABLE games ADD COLUMN size INTEGER"); } catch (_) {}
+// Миграция: партию завершили досрочно (VIP-кнопка). finished при этом остаётся пустым — в таблицу и лимит не идёт.
+try { db.exec("ALTER TABLE games ADD COLUMN quit INTEGER"); } catch (_) {}
 
 const startGame = safe((userId, userName, role, vip, size) =>
   Number(db.prepare("INSERT INTO games (user_id, user_name, role, started, vip, size) VALUES (?, ?, ?, ?, ?, ?)")
@@ -72,6 +74,11 @@ const finishGame = safe((gameId, role, winner, days, alive) => {
   const won = (SIDE[role] || "town") === winner ? 1 : 0;
   db.prepare("UPDATE games SET finished = ?, winner = ?, won = ?, days = ?, alive = ? WHERE id = ?")
     .run(Date.now(), winner, won, days, alive ? 1 : 0, gameId);
+});
+
+const quitGame = safe((gameId) => {
+  if (!gameId) return;
+  db.prepare("UPDATE games SET quit = ? WHERE id = ? AND finished IS NULL").run(Date.now(), gameId);
 });
 
 // Спидометр: каждый запрос к ИИ — длительность и кто ответил (для сводки «скорость ИИ за сутки»)
@@ -149,4 +156,4 @@ function finishedToday(userId) {
   catch (e) { console.error("журнал партий:", e.message); return 0; }   // журнал сломался — лимит не мешает играть
 }
 
-module.exports = { db, startGame, logMsg, finishGame, logAiCall, pointsFor, leaderboard, invalidateLeaderboard, weekStart, dayStart, finishedToday };
+module.exports = { db, startGame, logMsg, finishGame, quitGame, logAiCall, pointsFor, leaderboard, invalidateLeaderboard, weekStart, dayStart, finishedToday };
