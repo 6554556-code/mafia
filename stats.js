@@ -21,7 +21,7 @@ const dayKey = (ts) => new Intl.DateTimeFormat("sv-SE", { timeZone: TZ, year: "n
 const fmt = (ts) => ts ? new Intl.DateTimeFormat("ru-RU", { timeZone: TZ, day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit" }).format(ts).replace(",", "") : "";
 const short = (ts) => new Intl.DateTimeFormat("ru-RU", { timeZone: TZ, day: "2-digit", month: "2-digit" }).format(ts);
 
-const ROLE = { mafia: "Мафия", maniac: "Маньяк", komissar: "Комиссар", doctor: "Доктор", civilian: "Мирный" };
+const ROLE = { mafia: "Мафия", maniac: "Маньяк", komissar: "Комиссар", doctor: "Доктор", civilian: "Мирный", putana: "Путана", bomzh: "Бомж" };
 const WIN = { town: "Деревня", mafia: "Мафия", maniac: "Маньяк" };
 const KIND = { say: "за столом", vote: "голос", whisper: "шёпот", whisper_reply: "ответ на шёпот", doc_whisper: "шёпот доктора", mafia_say: "напарнику-мафии" };
 
@@ -102,6 +102,19 @@ function summary({ users, games, dUsers, dGames, dMsgs }) {
       if (gs.length) L.push(`${ROLE[r]}: ${gs.length} парт., побед ${gs.filter((g) => g.won).length}`);
     }
   }
+  // баланс по размеру стола — за всё время (на столах больше 8 данных мало, копим): кто сколько выигрывает
+  {
+    const fAll = games.filter((g) => g.finished && g.winner);
+    const sizes = [...new Set(fAll.map((g) => g.size || 8))].sort((a, b) => a - b);
+    if (sizes.some((n) => n > 8)) {
+      L.push("", "🪑 Победы по столам (за всё время): деревня / мафия / маньяк");
+      for (const n of sizes) {
+        const gs = fAll.filter((g) => (g.size || 8) === n), w = (k) => pct(gs.filter((g) => g.winner === k).length, gs.length);
+        L.push(`${n} игр.: ${w("town")} / ${w("mafia")} / ${w("maniac")} — партий ${gs.length}`);
+      }
+    }
+  }
+
   if (played) {
     L.push("", "🏆 Самые активные за сутки");
     [...byUser.values()].sort((a, b) => b.games - a.games).slice(0, 5).forEach((u) => L.push(`${u.name} — ${u.games} парт.`));
