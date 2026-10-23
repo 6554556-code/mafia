@@ -232,6 +232,20 @@
   .replay:active{transform:translate(1px,1px);box-shadow:2px 2px 0 rgba(44,44,40,.2)}
   .replay:disabled{opacity:.6;cursor:default}
 
+  /* ── VIP и дневной лимит ── */
+  .title{position:relative}
+  .vip-badge{position:absolute;right:-7px;top:-10px;font-size:15px;line-height:1;filter:drop-shadow(0 1px 0 rgba(44,44,40,.35))}
+  .acct-line{text-align:center;font-size:12px;color:var(--ink-soft);padding:2px 0}
+  .limitbox{background:var(--paper);border:2px solid var(--line);padding:14px 14px 12px;text-align:center;line-height:1.5;font-size:14px;
+    box-shadow:3px 3px 0 rgba(44,44,40,.15)}
+  .limitbox p{margin:0 0 8px}
+  .limitbox .vipsell{color:#7a5c12}
+  .limitbox .buyvip{display:block;width:100%;margin-top:6px;padding:11px;font-weight:700;font-size:15px;
+    background:var(--paper-2);color:var(--ink-soft);border:2px dashed var(--ink-soft);cursor:not-allowed}
+  .ava-lock{font-size:12px;color:#7a5c12;margin:2px 0 6px}
+  .ava-grid.locked .ava-opt{opacity:.45;cursor:not-allowed;filter:grayscale(.6)}
+  .ava-grid.locked .ava-opt:hover{border-color:var(--line)}
+
   .conn{position:fixed;top:6px;right:10px;font-size:11px;color:#5a5a52;
     background:var(--paper);border:2px solid var(--line);padding:2px 8px}
   .conn.live{color:var(--good)}
@@ -327,9 +341,9 @@
   <div class="machine">
 
     <div class="panel topbar">
-      <div class="title pixel">МАФИЯ</div>
+      <div class="title pixel">МАФИЯ<span class="vip-badge" id="vipBadge" style="display:none" title="VIP">👑</span></div>
       <div class="chip day pixel" id="dayChip" title="Твоя роль и день"><span class="day-role" id="youRole"></span><span class="day-num">☀ <span id="dayLabel">День 1</span></span></div>
-      <div class="chip mode pixel locked" id="eyeBtn" onclick="toggleEye()" title="Откроется, когда выбудешь из игры · сразу — в Премиум"><span class="eye">👁</span><span class="eye-txt">Глаз бога</span></div>
+      <div class="chip mode pixel locked" id="eyeBtn" onclick="toggleEye()" title="Откроется, когда выбудешь из игры · сразу — в VIP 👑"><span class="eye">👁</span><span class="eye-txt">Глаз бога</span></div>
       <div class="chip lb pixel" id="lbBtn" title="Турнирная таблица" onclick="openLeaderboard()">🏆</div>
       <div class="chip door pixel" id="logoutBtn" title="Выход" onclick="fetch('/logout',{method:'POST'}).finally(()=>location.href='/auth.html')">🚪</div>
       <div class="chip gear pixel" id="gearBtn" title="Настройки" onclick="openSettings()">⚙️</div>
@@ -421,11 +435,11 @@ function setEyeAllowed(ok){
   eyeAllowed=ok;
   const b=document.getElementById('eyeBtn');
   b.classList.toggle('locked',!ok);
-  b.title = ok ? "Глаз бога: показать роли, мысли и шёпот" : "Откроется, когда выбудешь из игры · сразу — в Премиум";
+  b.title = ok ? "Глаз бога: показать роли, мысли и шёпот" : "Откроется, когда выбудешь из игры · сразу — в VIP 👑";
   if(!ok){ b.classList.remove('on'); document.body.classList.add('blind'); }
 }
 function toggleEye(){
-  if(!eyeAllowed){ toast("👁 <b>Глаз Бога</b> даёт тебе право увидеть все роли, мысли, шёпот игроков. Видеть с первой минуты можно только на <b>Премиум</b> тарифе. Сейчас ты можешь включить Глаз только после твоего выбывания из игры или в финале.", 7000); return; }
+  if(!eyeAllowed){ toast("👁 <b>Глаз Бога</b> даёт тебе право увидеть все роли, мысли, шёпот игроков. Видеть с первой минуты можно только с <b>VIP 👑</b>. Сейчас ты можешь включить Глаз только после твоего выбывания из игры или в финале.", 7000); return; }
   const on=!document.getElementById('eyeBtn').classList.contains('on');
   document.getElementById('eyeBtn').classList.toggle('on',on);
   document.body.classList.toggle('blind',!on);
@@ -629,6 +643,31 @@ function showTyping(){
 }
 function hideTyping(){ if(typingEl){typingEl.remove();typingEl=null;} }
 
+// ── VIP и дневной лимит ──
+const ruDate=ts=>new Date(ts).toLocaleDateString('ru-RU',{day:'numeric',month:'long',timeZone:'Europe/Moscow'});
+function setVipBadge(vipUntil){
+  const b=document.getElementById('vipBadge');
+  b.style.display=vipUntil?'':'none';
+  if(vipUntil) b.title='VIP до '+ruDate(vipUntil);
+}
+// плашка «бесплатные партии на сегодня закончились» (тексты — Иры)
+function limitBox(a){
+  const d=document.createElement('div'); d.className='limitbox ev'; d.id='limitBox';
+  d.innerHTML=`<p>🌙 Бесплатные партии на сегодня закончились. ${a.limit} новых каждый день — после полуночи по Москве.</p>`+
+    `<p class="vipsell">👑 С VIP — без лимита, глаз бога с первой минуты, выбор роли, размера стола и аватарки.</p>`+
+    `<button class="buyvip pixel" disabled>👑 Купить VIP (скоро)</button>`;
+  return d;
+}
+// строка под очками: VIP — до какого числа; бесплатный — сколько сыграно сегодня
+function acctLine(a){
+  const d=document.createElement('div'); d.className='acct-line ev';
+  if(a.vip){
+    const left=a.vipUntil?(a.vipUntil-Date.now())/864e5:99;
+    d.textContent=!a.vipUntil?'👑 VIP':left<=3?`👑 VIP заканчивается ${ruDate(a.vipUntil)} · продлить (скоро)`:`👑 VIP до ${ruDate(a.vipUntil)}`;
+  } else d.textContent=`Сегодня сыграно ${Math.min(a.played,a.limit)} из ${a.limit} бесплатных партий`;
+  return d;
+}
+
 // ── обработка событий от сервера ────────────────────────────────────────────
 function handle(e){
   if(e.type!=="typing") hideTyping();
@@ -640,7 +679,11 @@ function handle(e){
     case "reset":
       players=[];feed.innerHTML="";render();dayLabel.textContent="День 1";dayChip.classList.remove('has-role');hideInput();break;
     case "eye_state":
-      setEyeAllowed(!!e.open);break;
+      setEyeAllowed(!!e.open); setVipBadge(e.premium ? (e.vipUntil||1) : null); break;
+    case "limit":
+      // лимит на сегодня исчерпан: партии нет — только плашка
+      players=[];feed.innerHTML="";render();hideInput();
+      add(limitBox(e));break;
     case "eye_unlocked":
       // сервер открыл глаз: перечитываем партию — теперь придёт и всё скрытое, на своих местах в ленте
       setEyeAllowed(true);
@@ -698,6 +741,15 @@ function handle(e){
       line.title='Открыть турнирную таблицу'; line.onclick=openLeaderboard;
       const rb=document.getElementById('replayBtn');
       if(rb) feed.insertBefore(line,rb); else add(line);     // над кнопкой «Сыграть ещё»
+      if(e.acct){
+        const al=acctLine(e.acct);
+        if(rb) feed.insertBefore(al,rb); else add(al);
+        // бесплатные на сегодня кончились — вместо «Сыграть ещё» плашка лимита
+        if(!e.acct.vip && e.acct.played>=e.acct.limit){
+          if(rb) rb.remove();
+          if(!document.getElementById('limitBox')) add(limitBox(e.acct));
+        }
+      }
       if(atBottom()) feed.scrollTop=feed.scrollHeight;
       break;}
   }
@@ -728,24 +780,29 @@ function openSettings(){
     document.getElementById('bioAge').value=u.bio_age??'';
     document.getElementById('bioJob').value=u.bio_job??'';
     document.getElementById('bioHobby').value=u.bio_hobby??'';
-    loadAvatars(u.avatar); } }).catch(()=>{});
+    const a=d.account||{};
+    document.getElementById('acctInfo').textContent = a.vip
+      ? '👑 VIP до '+ruDate(a.vipUntil)
+      : `Бесплатный аккаунт · сегодня сыграно ${Math.min(a.played||0,a.limit||5)} из ${a.limit||5} партий · 👑 VIP — скоро`;
+    loadAvatars(u.avatar, !!a.vip); } }).catch(()=>{});
   document.getElementById('nickInput').focus();
 }
-async function loadAvatars(current){
+async function loadAvatars(current, vip){
   const grid=document.getElementById('avaGrid');
   grid.innerHTML='<div class="ava-group-title">загрузка…</div>';
   let data;
   try{ data=await (await fetch('/avatars')).json(); }catch(_){ grid.innerHTML='<div class="ava-group-title">не удалось загрузить</div>'; return; }
   grid.innerHTML='';
+  if(!vip){ const n=document.createElement('div'); n.className='ava-lock'; n.textContent='🔒 Выбор лица — в VIP 👑 (скоро)'; grid.appendChild(n); }
   for(const [title,list] of [['Мужские',data.male||[]],['Женские',data.female||[]]]){
     if(!list.length) continue;
     const t=document.createElement('div'); t.className='ava-group-title'; t.textContent=title; grid.appendChild(t);
-    const g=document.createElement('div'); g.className='ava-grid';
+    const g=document.createElement('div'); g.className='ava-grid'+(vip?'':' locked');
     for(const file of list){
       const b=document.createElement('button');
       b.className='ava-opt'+(file===current?' sel':'');
       b.innerHTML='<img src="avatars/'+file+'" alt="">';
-      b.onclick=()=>chooseAvatar(file,b);
+      b.onclick=vip?()=>chooseAvatar(file,b):()=>{};
       g.appendChild(b);
     }
     grid.appendChild(g);
@@ -916,7 +973,7 @@ connect();
       <label>Выбери своё лицо 👇</label>
       <div id="avaGrid"></div>
     </div>
-    <div class="soon">⭐ Тип аккаунта — скоро</div>
+    <div class="soon" id="acctInfo">…</div>
   </div>
 </div>
 </body>
