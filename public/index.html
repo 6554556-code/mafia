@@ -242,6 +242,10 @@
   .limitbox .vipsell{color:#7a5c12}
   .limitbox .buyvip{display:block;width:100%;margin-top:6px;padding:11px;font-weight:700;font-size:15px;
     background:var(--paper-2);color:var(--ink-soft);border:2px dashed var(--ink-soft);cursor:not-allowed}
+  /* памятка роли */
+  .memo{background:#fff8e1;border-color:#d4bd4c;font-size:13px;line-height:1.55}
+  .memo-hint{margin-top:6px;font-size:11px;color:var(--ink-soft)}
+  .chip.day.has-role{cursor:pointer}
   /* ── экран перед партией ── */
   .setupbox{background:var(--paper);border:2px solid var(--line);padding:12px 12px 14px;box-shadow:3px 3px 0 rgba(44,44,40,.15)}
   .st-title{text-align:center;font-weight:700;font-size:16px;margin-bottom:8px}
@@ -368,7 +372,7 @@
 
     <div class="panel topbar">
       <div class="title pixel">МАФИЯ<span class="vip-badge" id="vipBadge" style="display:none" title="VIP">👑</span></div>
-      <div class="chip day pixel" id="dayChip" title="Твоя роль и день"><span class="day-role" id="youRole"></span><span class="day-num">☀ <span id="dayLabel">День 1</span></span></div>
+      <div class="chip day pixel" id="dayChip" title="Твоя роль — нажми для памятки" onclick="if(myRole&&ROLE_MEMO[myRole])toast(memoOf(myRole),9000)"><span class="day-role" id="youRole"></span><span class="day-num">☀ <span id="dayLabel">День 1</span></span></div>
       <div class="chip mode pixel locked" id="eyeBtn" onclick="toggleEye()" title="Откроется, когда выбудешь из игры · сразу — в VIP 👑"><span class="eye">👁</span><span class="eye-txt">Глаз бога</span></div>
       <div class="chip lb pixel" id="lbBtn" title="Турнирная таблица" onclick="openLeaderboard()">🏆</div>
       <div class="chip door pixel" id="logoutBtn" title="Выход" onclick="fetch('/logout',{method:'POST'}).finally(()=>location.href='/auth.html')">🚪</div>
@@ -482,6 +486,18 @@ let tableSetup=null;       // состав стола {mafia:2,...} — публ
 let myName=null;           // имя человека за столом
 const roleRu={mafia:"Мафия",maniac:"Маньяк",komissar:"Комиссар",doctor:"Доктор",civilian:"Мирный",putana:"Путана",bomzh:"Бомж"};
 const roleIco={mafia:"🔪",maniac:"🩸",komissar:"🔍",doctor:"🩺",civilian:"🙂",putana:"🌹",bomzh:"🍾"};
+// Памятка роли: показывается карточкой в начале партии и по тапу на свою роль в шапке
+const ROLE_MEMO={
+  mafia:"🔪 <b>Ты — мафия.</b> Ночью вместе с напарниками выбираете одну жертву. Днём притворяйся мирным и отводи подозрения. Мафия побеждает, когда её не меньше, чем остальных.",
+  maniac:"🩸 <b>Ты — маньяк</b>, сам за себя. Каждую ночь убиваешь одного любого. Днём прикидывайся мирным. Победа — остаться последним.",
+  komissar:"🔍 <b>Ты — комиссар</b>, за деревню. Ночью проверяешь одного и узнаёшь его роль. Можно шепнуть союзнику. Раскроешься — станешь мишенью.",
+  doctor:"🩺 <b>Ты — доктор</b>, за деревню. Ночью спасаешь одного от смерти, можно и себя.",
+  civilian:"🙂 <b>Ты — мирный</b>, за деревню. Ночью спишь, днём по спорам вычисляешь злодеев и голосуешь.",
+  putana:"🌹 <b>Ты — путана</b>, за деревню. Ночью приходишь к одному — его ночной ход срывается. Подержала любого мафиози — мафия этой ночью без убийства; маньяка — без его убийства. Не мешай своим: доктору, комиссару, бомжу.",
+  bomzh:"🍾 <b>Ты — бомж</b>, за деревню. Ночью дежуришь у дома одного игрока и видишь, кто туда приходил. Хозяина утром нашли мёртвым — один из пришедших убийца.",
+};
+const memoOf=r=>(ROLE_MEMO[r]||"").replace(", комиссару, бомжу", tableSetup&&tableSetup.bomzh?", комиссару, бомжу":" и комиссару")+(r&&r!=="mafia"&&r!=="maniac"?" Деревня побеждает, когда выбыли вся мафия и маньяк.":"");
+let myRole=null;
 const colorOf=n=>{const p=players.find(x=>x.name===n);return p?deep(p.c):"#333";};
 
 // ── отправка действия человека серверу (обратный канал) ──
@@ -506,7 +522,7 @@ function showInput(e){
     inputLbl.textContent="Ваша реплика";
     sayMode.style.display=""; inputbar.classList.add('on'); sayText.value=""; sayText.focus();
   } else if(kind==="vote" || kind==="check"){
-    inputLbl.textContent = kind==="vote" ? "Ваш голос — кого казнить?" : "Ночь. Кого проверить?";
+    inputLbl.textContent = kind==="vote" ? "Ваш голос — кого казнить?" : "Ночь. Кого проверить? Узнаешь его роль";
     voteMode.style.display="";
     voteReason.style.display = kind==="vote" ? "" : "none";
     voteReason.value="";
@@ -517,13 +533,13 @@ function showInput(e){
     });
     inputbar.classList.add('on');
   } else if(kind==="kill_maniac"){
-    inputLbl.textContent="Ночь. Кого убить?";
+    inputLbl.textContent="Ночь. Кого убить? Доктор может спасти"+(tableSetup&&tableSetup.putana?", путана — задержать тебя":"");
     voteMode.style.display="";
     voteReason.style.display="none";
     nameButtons(voteBtns, e.candidates, (name)=>{ hideInput(); sendAction({target:name}); });
     inputbar.classList.add('on');
   } else if(kind==="kill_mafia"){
-    inputLbl.textContent = e.suggest ? "Ночь. Напарник предлагает жертву — решай:" : "Ночь. Кого уберём?";
+    inputLbl.textContent = (e.suggest ? "Ночь. Напарник предлагает жертву — решай:" : "Ночь. Кого уберём?")+" Одна жертва на всю мафию";
     voteMode.style.display="";
     voteReason.style.display="none";
     nameButtons(voteBtns, e.candidates, (name)=>{ hideInput(); sendAction({target:name}); });
@@ -535,7 +551,7 @@ function showInput(e){
     inputbar.classList.add('on');
   } else if(kind==="visit"){
     const hist=(e.history||[]).map(v=>`н${v.night} — ${v.name} (${v.busy?"выходил(а)":"спал(а)"})`).join(", ");
-    inputLbl.textContent="Ночь. К кому пойдёшь? Его ночной ход сорвётся"+(hist?" · прошлые визиты: "+hist:"");
+    inputLbl.textContent="Ночь. К кому пойдёшь? Его ночной ход сорвётся; мафиози или маньяк — без убийства"+(hist?" · прошлые визиты: "+hist:"");
     voteMode.style.display="";
     voteReason.style.display="none";
     nameButtons(voteBtns, e.candidates, (name)=>{ hideInput(); sendAction({target:name}); });
@@ -544,13 +560,13 @@ function showInput(e){
     }
     inputbar.classList.add('on');
   } else if(kind==="watch"){
-    inputLbl.textContent="Ночь. У чьего дома дежуришь?";
+    inputLbl.textContent="Ночь. У чьего дома дежуришь? Увидишь всех, кто туда придёт";
     voteMode.style.display="";
     voteReason.style.display="none";
     nameButtons(voteBtns, e.candidates, (name)=>{ hideInput(); sendAction({target:name}); });
     inputbar.classList.add('on');
   } else if(kind==="heal"){
-    inputLbl.textContent="Ночь. Кого лечить?";
+    inputLbl.textContent="Ночь. Кого лечить? Если его этой ночью убьют — выживет";
     voteMode.style.display="";
     voteReason.style.display="none";
     // себя — первой кнопкой с особой подписью, остальных — как есть
@@ -806,7 +822,9 @@ function handle(e){
       document.getElementById('eyeBtn').classList.add('fresh');   // без всплывашки — не перекрываем итог; значок тихо пульсирует
       reconnect();break;
     case "you":
-    myName=e.name; youRoleEl.textContent=roleRu[e.role]||e.role; dayChip.classList.add('has-role');render();break;
+    myName=e.name; myRole=e.role; youRoleEl.textContent=roleRu[e.role]||e.role; dayChip.classList.add('has-role');render();
+      if(ROLE_MEMO[e.role]) add(el("plaque memo",memoOf(e.role)+`<div class="memo-hint">Памятка всегда под рукой — нажми на свою роль вверху</div>`));
+      break;
     case "your_turn":
       showInput(e);break;
     case "your_turn_done":
