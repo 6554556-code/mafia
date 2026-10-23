@@ -1,226 +1,213 @@
-<!DOCTYPE html>
-<html lang="ru">
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
-<title>МАФИЯ — игра с живыми ИИ</title>
-<meta name="description" content="Мафия против хитрых ИИ-персонажей: врут, спорят, блефуют. Вычисли мафию раньше, чем она вычислит тебя.">
-<meta name="theme-color" content="#0f1424">
-<link rel="preload" as="image" href="img/splash.jpg">
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Pixelify+Sans:wght@500;700&family=JetBrains+Mono:wght@500;700&display=swap" rel="stylesheet">
-<style>
-  :root{
-    --paper:#f2efe6; --paper-2:#e9e5d8;
-    --ink:#2c2c28; --ink-soft:#5a5a52; --line:#2c2c28;
-    --red:#b5352c; --red-bg:#f6d9d8; --red-br:#d98f8c;
-    --night:#0f1424;
-    --ui-font:"JetBrains Mono",ui-monospace,"DejaVu Sans Mono",monospace;
+// auth.js — вход/регистрация на встроенных инструментах Node.
+// Ноль сторонних пакетов: node:sqlite (база) + crypto (пароли, токены).
+// Вся возня с базой и паролями живёт здесь; движок игры этого не касается.
+
+const { DatabaseSync } = require("node:sqlite");
+const crypto = require("crypto");
+const path = require("path");
+
+// База — простой файл рядом с игрой. Создастся сам при первом запуске.
+const db = new DatabaseSync(path.join(__dirname, "mafia.db"));
+// база общая с журналом и командой vip.js: если кто-то прямо сейчас пишет — подождать до 3 с, а не падать
+db.exec("PRAGMA busy_timeout = 3000");
+const fs = require("fs");
+const AVA_DIR = path.join(__dirname, "public", "avatars");
+
+// Таблицы: пользователи и их сессии. IF NOT EXISTS — безопасно при каждом старте.
+db.exec(`
+  CREATE TABLE IF NOT EXISTS users (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    email      TEXT UNIQUE NOT NULL,
+    pass       TEXT NOT NULL,
+    name       TEXT NOT NULL,
+    name_lower TEXT UNIQUE NOT NULL,
+    created    INTEGER NOT NULL
+  );
+  CREATE TABLE IF NOT EXISTS sessions (
+    token   TEXT PRIMARY KEY,
+    user_id INTEGER NOT NULL,
+    created INTEGER NOT NULL
+  );
+`);
+
+// Миграция: колонка avatar. База НЕ пересоздаётся — ALTER тихо игнорится, если колонка уже есть.
+try { db.exec("ALTER TABLE users ADD COLUMN avatar TEXT"); } catch (_) {}
+// Миграция: «о себе» (возраст / кто по жизни / увлечения). Всё необязательно, пустое = NULL.
+for (const col of ["bio_age INTEGER", "bio_job TEXT", "bio_hobby TEXT"]) {
+  try { db.exec(`ALTER TABLE users ADD COLUMN ${col}`); } catch (_) {}
+}
+// Миграция: VIP. vip_until = до какого момента действует (метка времени в мс); NULL = бесплатный.
+try { db.exec("ALTER TABLE users ADD COLUMN vip_until INTEGER"); } catch (_) {}
+// Какие поля пользователя отдаём наружу (пароль и прочее — никогда)
+const USER_COLS = "id, email, name, avatar, bio_age, bio_job, bio_hobby, vip_until";
+
+// Список .png в папке avatars/<sub>, в виде "<sub>/файл.png"
+function listDir(sub) {
+  try { return fs.readdirSync(path.join(AVA_DIR, sub)).filter((f) => /\.png$/i.test(f)).map((f) => sub + "/" + f).sort(); }
+  catch (_) { return []; }
+}
+function randomNeutral() {
+  const list = listDir("neutral");
+  return list.length ? list[(Math.random() * list.length) | 0] : null;
+}
+// Разовая раздача случайного нейтрального лица тем, у кого его ещё нет (аккаунты до этой фичи)
+try {
+  for (const u of db.prepare("SELECT id FROM users WHERE avatar IS NULL").all()) {
+    const a = randomNeutral(); if (a) db.prepare("UPDATE users SET avatar = ? WHERE id = ?").run(a, u.id);
   }
-  *{box-sizing:border-box}
-  html,body{margin:0;height:100%}
-  body{
-    background:var(--night);color:var(--ink);
-    font-family:var(--ui-font);
-    display:grid;place-items:center;overflow:hidden;
-    height:100vh;height:100dvh;
+} catch (_) {}
+
+// ── Пароли: scrypt + случайная соль. В базе только хэш, никогда не сам пароль. ──
+function hashPassword(password) {
+  const salt = crypto.randomBytes(16).toString("hex");
+  const hash = crypto.scryptSync(password, salt, 64).toString("hex");
+  return `${salt}:${hash}`;
+}
+function verifyPassword(password, stored) {
+  const [salt, hash] = String(stored).split(":");
+  if (!salt || !hash) return false;
+  const test = crypto.scryptSync(password, salt, 64).toString("hex");
+  const a = Buffer.from(hash, "hex");
+  const b = Buffer.from(test, "hex");
+  // сравнение, устойчивое к тайминг-атакам
+  return a.length === b.length && crypto.timingSafeEqual(a, b);
+}
+
+// ── Нормализация и простая валидация ──
+function normEmail(e) { return String(e || "").trim().toLowerCase(); }
+function validEmail(e) { return /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(e); }
+// Игровой ник: 2–16 символов — буквы любого языка, цифры, пробел, дефис, подчёркивание.
+function validName(n) { return /^[\p{L}\p{N} _-]{2,16}$/u.test(n); }
+
+// ── Регистрация: заводит пользователя и сразу открывает сессию ──
+function register(email, password, name) {
+  email = normEmail(email);
+  name = String(name || "").trim();
+  password = String(password || "");
+  if (!validEmail(email)) return { error: "Некорректная почта" };
+  if (password.length < 6)  return { error: "Пароль минимум 6 символов" };
+  if (!validName(name))     return { error: "Ник: 2–16 символов — буквы, цифры, пробел, дефис или подчёркивание" };
+
+  const exists = db.prepare("SELECT id FROM users WHERE email = ?").get(email);
+  if (exists) return { error: "Такая почта уже зарегистрирована" };
+  const nameLower = name.toLowerCase();
+  const nameTaken = db.prepare("SELECT id FROM users WHERE name_lower = ?").get(nameLower);
+  if (nameTaken) return { error: "Этот ник уже занят" };
+
+  const info = db.prepare(
+    "INSERT INTO users (email, pass, name, name_lower, avatar, created) VALUES (?, ?, ?, ?, ?, ?)"
+  ).run(email, hashPassword(password), name, nameLower, randomNeutral(), Date.now());
+
+  return startSession(info.lastInsertRowid);
+}
+
+// ── Вход ──
+function login(email, password) {
+  email = normEmail(email);
+  const u = db.prepare("SELECT * FROM users WHERE email = ?").get(email);
+  // одинаковый ответ на «нет почты» и «неверный пароль» — не подсказываем, что есть в базе
+  if (!u || !verifyPassword(String(password || ""), u.pass)) {
+    return { error: "Неверная почта или пароль" };
   }
-  .pixel{font-family:"Pixelify Sans",ui-monospace,monospace}
+  return startSession(u.id);
+}
 
-  /* ── заставка: картинка целиком, в пропорциях телефона ── */
-  .bg{position:fixed;inset:-40px;background:url(img/splash-bg.jpg) center/cover;filter:blur(24px) brightness(.45);z-index:0}
-  .splash{
-    position:relative;z-index:1;
-    width:min(100vw, calc(100dvh * 9 / 16));
-    aspect-ratio:720/1280;
-    box-shadow:0 0 60px rgba(0,0,0,.6);
-  }
-  .splash img{display:block;width:100%;height:100%;user-select:none;-webkit-user-drag:none}
-  /* невидимые кнопки ровно поверх нарисованных «Вход» и «Правила» (в % от картинки 720×1280) */
-  .hot{
-    position:absolute;border:0;padding:0;margin:0;cursor:pointer;
-    background:transparent;border-radius:6px;
-    -webkit-tap-highlight-color:transparent;
-    transition:background .12s, box-shadow .12s, transform .08s;
-  }
-  .hot-login{left:21.5%;top:77.9%;width:57%;height:7.8%}
-  .hot-rules{left:21.8%;top:86.7%;width:56.3%;height:6.6%}
-  .hot:hover{background:rgba(255,240,200,.10);box-shadow:0 0 18px rgba(255,200,80,.45)}
-  .hot:active{background:rgba(0,0,0,.18);transform:translateY(1px)}
-  .hot:focus-visible{outline:3px solid #ffd76a;outline-offset:2px}
-  /* лёгкое «дыхание» главной кнопки — подсказка, что сюда жать */
-  .hot-login{animation:glow 2.6s ease-in-out infinite}
-  @keyframes glow{0%,100%{box-shadow:0 0 0 rgba(255,190,60,0)}50%{box-shadow:0 0 22px rgba(255,190,60,.55)}}
-  @media (prefers-reduced-motion:reduce){.hot-login{animation:none}}
+// ── Сессии (в базе — переживают перезапуск сервера) ──
+function startSession(userId) {
+  const token = crypto.randomBytes(32).toString("hex");
+  db.prepare("INSERT INTO sessions (token, user_id, created) VALUES (?, ?, ?)")
+    .run(token, userId, Date.now());
+  const user = db.prepare(`SELECT ${USER_COLS} FROM users WHERE id = ?`).get(userId);
+  return { token, user };
+}
+function logout(token) {
+  if (token) db.prepare("DELETE FROM sessions WHERE token = ?").run(token);
+}
+function userByToken(token) {
+  if (!token) return null;
+  const s = db.prepare("SELECT user_id FROM sessions WHERE token = ?").get(token);
+  if (!s) return null;
+  return db.prepare(`SELECT ${USER_COLS} FROM users WHERE id = ?`).get(s.user_id) || null;
+}
 
-  /* ── окна (вход/регистрация и правила) ── */
-  .sheet{position:fixed;inset:0;z-index:10;display:none;align-items:center;justify-content:center;padding:14px;background:rgba(10,12,20,.62)}
-  .sheet.on{display:flex;animation:fade .18s ease-out}
-  @keyframes fade{from{opacity:0}to{opacity:1}}
-  .card{
-    position:relative;width:100%;max-width:400px;max-height:calc(100dvh - 28px);overflow-y:auto;
-    background:var(--paper);border:3px solid var(--line);
-    box-shadow:inset 0 0 0 2px var(--paper), 4px 4px 0 rgba(0,0,0,.35);
-    padding:20px 18px;
-  }
-  .close{position:absolute;right:8px;top:6px;border:0;background:none;font-size:20px;cursor:pointer;color:var(--ink-soft);padding:6px}
-  .close:hover{color:var(--ink)}
-  .brand{text-align:center;font-size:30px;font-weight:700;letter-spacing:2px;margin-bottom:2px}
-
-  .tabs{display:flex;gap:6px;margin:16px 0 14px}
-  .tab{flex:1;text-align:center;cursor:pointer;user-select:none;padding:8px 0;font-size:14px;font-weight:700;
-    background:var(--paper-2);border:2px solid var(--line);color:var(--ink-soft)}
-  .tab.on{background:var(--red);color:#fff}
-  label{display:block;font-size:12px;letter-spacing:.3px;margin:12px 0 4px;color:var(--ink-soft)}
-  input{width:100%;padding:9px 10px;font-size:16px;font-family:inherit;color:var(--ink);background:#fbfaf5;border:2px solid var(--line);outline:none}
-  input:focus{border-color:var(--red)}
-  .btn{width:100%;margin-top:18px;padding:11px 0;cursor:pointer;font-family:inherit;font-size:16px;font-weight:700;letter-spacing:1px;
-    background:var(--red);color:#fff;border:2px solid var(--line);box-shadow:3px 3px 0 rgba(44,44,40,.25)}
-  .btn:active{transform:translate(1px,1px);box-shadow:2px 2px 0 rgba(44,44,40,.25)}
-  .btn:disabled{opacity:.6;cursor:default}
-  .msg{margin-top:14px;padding:9px 10px;font-size:13px;display:none}
-  .msg.err{display:block;background:var(--red-bg);border:2px solid var(--red-br);color:var(--red)}
-
-  /* 18+ — значок в углу заставки и строка под кнопкой регистрации */
-  .age18{position:absolute;left:3%;top:2%;z-index:2;font-family:var(--ui-font);font-weight:700;font-size:clamp(12px,3.4vw,16px);
-    color:#fff;background:rgba(181,53,44,.92);border:2px solid #fff;border-radius:50%;
-    width:2.9em;height:2.9em;display:grid;place-items:center;box-shadow:0 2px 8px rgba(0,0,0,.5);pointer-events:none}
-  .agree{margin-top:10px;font-size:12px;line-height:1.45;color:var(--ink-soft);text-align:center}
-
-  /* правила */
-  .rules h2{font-size:15px;margin:16px 0 6px;letter-spacing:.3px}
-  .rules p{font-size:14px;line-height:1.55;margin:0 0 8px}
-  .rules .role{display:flex;gap:9px;align-items:baseline;font-size:14px;line-height:1.5;margin:5px 0}
-  .rules .role .i{flex:none;width:22px;text-align:center}
-  .rules .tip{margin-top:14px;padding:9px 10px;background:var(--paper-2);border:2px dashed var(--ink-soft);font-size:13px;line-height:1.5}
-</style>
-</head>
-<body>
-  <div class="bg" aria-hidden="true"></div>
-
-  <main class="splash">
-    <img src="img/splash.jpg" alt="МАФИЯ: ночной город, мафиози в белом костюме, роковая дама и бродяга">
-    <div class="age18" title="Игра для взрослых">18+</div>
-    <button class="hot hot-login" aria-label="Вход" onclick="openSheet('auth')"></button>
-    <button class="hot hot-rules" aria-label="Правила" onclick="openSheet('rules')"></button>
-  </main>
-
-  <!-- Вход / регистрация -->
-  <div class="sheet" id="sheet-auth" onclick="if(event.target===this)closeSheets()">
-    <div class="card" role="dialog" aria-label="Вход">
-      <button class="close" onclick="closeSheets()" aria-label="Закрыть">✕</button>
-      <div class="brand pixel">МАФИЯ</div>
-
-      <div class="tabs">
-        <div class="tab" id="tabLogin">Вход</div>
-        <div class="tab" id="tabReg">Регистрация</div>
-      </div>
-
-      <label for="email">Почта</label>
-      <input id="email" type="email" autocomplete="email" placeholder="you@mail.com">
-
-      <div id="nameRow" style="display:none">
-        <label for="name">Игровой ник (2–16 символов)</label>
-        <input id="name" type="text" maxlength="16" autocomplete="off" placeholder="как звать за столом">
-      </div>
-
-      <label for="password">Пароль</label>
-      <input id="password" type="password" autocomplete="current-password" placeholder="минимум 6 символов">
-
-      <button class="btn" id="submit">ВОЙТИ</button>
-      <div class="agree" id="agree18" style="display:none">Психологическая игра 18+. Регистрируясь, ты подтверждаешь, что тебе есть 18 лет.</div>
-      <div class="msg" id="msg"></div>
-    </div>
-  </div>
-
-  <!-- Правила -->
-  <div class="sheet" id="sheet-rules" onclick="if(event.target===this)closeSheets()">
-    <div class="card rules" role="dialog" aria-label="Правила">
-      <button class="close" onclick="closeSheets()" aria-label="Закрыть">✕</button>
-      <div class="brand pixel">Как играть</div>
-      <p style="margin-top:12px">Ты за столом с семью персонажами. Каждому тайно выпадает роль. Кто есть кто — неизвестно: вычисляй по словам и поступкам.</p>
-
-      <div class="role"><span class="i">🔪</span><span><b>Мафия</b> (двое, на больших столах — трое): ночью вместе убирают одного, днём прикидываются мирными.</span></div>
-      <div class="role"><span class="i">🩸</span><span><b>Маньяк</b>: одиночка, каждую ночь убивает кого захочет, сам за себя.</span></div>
-      <div class="role"><span class="i">🔍</span><span><b>Комиссар</b>: ночью проверяет одного и узнаёт его роль.</span></div>
-      <div class="role"><span class="i">🩺</span><span><b>Доктор</b>: ночью спасает одного от смерти, можно и себя.</span></div>
-      <div class="role"><span class="i">🙂</span><span><b>Мирный</b>: ночью спит, днём вычисляет злодеев.</span></div>
-      <div class="role"><span class="i">🌹</span><span><b>Путана</b> (VIP-стол от 9 игроков, за деревню): ночью приходит к одному игроку — его ночной ход срывается. Можно к одному и тому же каждую ночь.</span></div>
-      <div class="role"><span class="i">🍾</span><span><b>Бомж</b> (VIP-стол от 10 игроков, за деревню): ночью дежурит у дома одного игрока и видит, кто туда приходил. Роли не видит.</span></div>
-
-      <h2>Ход игры</h2>
-      <div class="role"><span class="i">🌙</span><span><b>Ночь:</b> роли действуют тайно. Утром становится известно, кто погиб и кем он был.</span></div>
-      <div class="role"><span class="i">☀</span><span><b>День:</b> два круга обсуждения — обвиняй, оправдывайся, блефуй. Потом голосование: казнят одного, его роль вскрывается.</span></div>
-      <div class="role"><span class="i">🤫</span><span><b>Шёпот:</b> личные сообщения один на один.</span></div>
-
-      <h2>Кто побеждает</h2>
-      <div class="role"><span class="i">🏆</span><span><b>Деревня</b> — когда убиты вся мафия и маньяк. <b>Мафия</b> — когда её не меньше, чем остальных. <b>Маньяк</b> — когда остался последним.</span></div>
-
-      <div class="role" style="margin-top:12px"><span class="i">👁</span><span><b>Глаз бога</b> показывает роли, мысли и шёпот всех игроков. Открывается, когда ты выбываешь из игры. С первой минуты — в Премиум.</span></div>
-
-      <div class="tip">💡 Персонажи живые: врут, ссорятся, радуются и грустят. Настроение — тоже улика.</div>
-
-      <button class="btn" onclick="openSheet('auth')">ИГРАТЬ</button>
-    </div>
-  </div>
-
-<script>
-  const $ = (id) => document.getElementById(id);
-  const nameRow = $("nameRow"), msg = $("msg"), btn = $("submit");
-  let mode = "login";
-
-  // Новичок (ещё ни разу не входил с этого устройства) сразу попадает на регистрацию
-  function seenBefore(){ try{ return localStorage.getItem("mafia_seen")==="1"; }catch(_){ return false; } }
-  function markSeen(){ try{ localStorage.setItem("mafia_seen","1"); }catch(_){} }
-
-  function openSheet(which){
-    closeSheets();
-    $("sheet-"+which).classList.add("on");
-    if(which==="auth"){ setMode(seenBefore() ? "login" : "register"); setTimeout(()=>$("email").focus(),50); }
-  }
-  function closeSheets(){ document.querySelectorAll(".sheet").forEach(s=>s.classList.remove("on")); }
-
-  function setMode(m){
-    mode = m;
-    $("tabLogin").classList.toggle("on", m==="login");
-    $("tabReg").classList.toggle("on", m==="register");
-    nameRow.style.display = m==="register" ? "block" : "none";
-    $("agree18").style.display = m==="register" ? "block" : "none";
-    btn.textContent = m==="register" ? "СОЗДАТЬ И ИГРАТЬ" : "ВОЙТИ";
-    $("password").setAttribute("autocomplete", m==="register" ? "new-password" : "current-password");
-    hideMsg();
-  }
-  $("tabLogin").onclick = () => setMode("login");
-  $("tabReg").onclick   = () => setMode("register");
-
-  function showErr(text){ msg.textContent = text; msg.className = "msg err"; }
-  function hideMsg(){ msg.className = "msg"; msg.textContent = ""; }
-
-  async function go(){
-    hideMsg();
-    const email = $("email").value.trim();
-    const password = $("password").value;
-    const name = $("name").value.trim();
-    if(!email || !password || (mode==="register" && !name)){ showErr("Заполни все поля."); return; }
-    const body = mode==="register" ? { email, password, name } : { email, password };
-    btn.disabled = true;
-    try{
-      const res = await fetch("/"+mode, { method:"POST", headers:{ "Content-Type":"application/json" }, body: JSON.stringify(body) });
-      const data = await res.json().catch(() => ({}));
-      if(!res.ok || data.error){ showErr(data.error || "Что-то пошло не так, попробуй ещё раз."); btn.disabled = false; return; }
-      markSeen();
-      location.href = "/"; // успех — за стол
-    }catch(e){
-      showErr("Сервер не отвечает. Проверь соединение.");
-      btn.disabled = false;
-    }
-  }
-  btn.onclick = go;
-  document.addEventListener("keydown", (e) => {
-    if(e.key === "Escape") closeSheets();
-    if(e.key === "Enter" && $("sheet-auth").classList.contains("on")) go();
+// ── Достаём токен сессии из cookie входящего запроса ──
+function parseCookies(req) {
+  const out = {};
+  (req.headers.cookie || "").split(";").forEach((p) => {
+    const i = p.indexOf("=");
+    if (i > -1) out[p.slice(0, i).trim()] = decodeURIComponent(p.slice(i + 1).trim());
   });
-</script>
-</body>
-</html>
+  return out;
+}
+function tokenFromReq(req) { return parseCookies(req).sid || null; }
+
+// ── Смена ника (те же правила, что при регистрации: длина, набор, уникальность) ──
+function rename(userId, newName) {
+  newName = String(newName || "").trim();
+  if (!validName(newName)) return { error: "Ник: 2–16 символов — буквы, цифры, пробел, дефис или подчёркивание" };
+  const newLower = newName.toLowerCase();
+  const taken = db.prepare("SELECT id FROM users WHERE name_lower = ? AND id != ?").get(newLower, userId);
+  if (taken) return { error: "Этот ник уже занят" };
+  db.prepare("UPDATE users SET name = ?, name_lower = ? WHERE id = ?").run(newName, newLower, userId);
+  return { user: db.prepare(`SELECT ${USER_COLS} FROM users WHERE id = ?`).get(userId) };
+}
+
+// ── Аватары ──
+// Сохранить выбор лица. Пускаем только male/female/neutral (не characters),
+// только простое имя файла (без слешей и «..») и только если файл реально есть.
+function setAvatar(userId, file) {
+  file = String(file || "");
+  if (!/^(male|female|neutral)\/[A-Za-z0-9_.-]+\.png$/.test(file)) return { error: "Недопустимое лицо" };
+  if (!fs.existsSync(path.join(AVA_DIR, file))) return { error: "Такого лица нет" };
+  db.prepare("UPDATE users SET avatar = ? WHERE id = ?").run(file, userId);
+  return { user: db.prepare(`SELECT ${USER_COLS} FROM users WHERE id = ?`).get(userId) };
+}
+// ── «О себе»: три необязательных поля ──
+// Текст попадает в промпт ИИ, поэтому чистим строго: одна строка, без служебных символов,
+// без скобок/кавычек (ими можно «закрыть» досье и дописать свои указания), до 40 символов.
+function cleanBio(v) {
+  return String(v ?? "").replace(/[\p{C}<>{}\[\]`"«»\\]/gu, " ").replace(/\s+/g, " ").trim();
+}
+function setBio(userId, bio) {
+  bio = bio || {};
+  let age = String(bio.age ?? "").trim();
+  if (age === "") age = null;
+  else {
+    if (!/^\d{1,2}$/.test(age) || +age < 18 || +age > 99) return { error: "Возраст — число от 18 до 99 (или оставь пустым): игра 18+" };
+    age = +age;
+  }
+  const job = cleanBio(bio.job), hobby = cleanBio(bio.hobby);
+  if (job.length > 40 || hobby.length > 40) return { error: "Не больше 40 символов в поле" };
+  db.prepare("UPDATE users SET bio_age = ?, bio_job = ?, bio_hobby = ? WHERE id = ?")
+    .run(age, job || null, hobby || null, userId);
+  return { user: db.prepare(`SELECT ${USER_COLS} FROM users WHERE id = ?`).get(userId) };
+}
+
+// Лица для сетки выбора: две группы — мужские и женские (свободные, без ИИшных из characters)
+function listAvatars() { return { male: listDir("male"), female: listDir("female") }; }
+
+// ── VIP ──
+// Действует, пока vip_until в будущем. Выдаётся командой на сервере (vip.js), позже — оплатой.
+function isVip(u) { return !!(u && u.vip_until && u.vip_until > Date.now()); }
+const DAY = 24 * 3600 * 1000;
+// Добавить дней: если VIP ещё идёт — продлеваем от его конца, иначе — от сейчас
+function vipAdd(email, days) {
+  email = normEmail(email); days = Number(days);
+  if (!Number.isInteger(days) || days < 1 || days > 3660) return { error: "Дней — целое число от 1 до 3660" };
+  const u = db.prepare("SELECT id, vip_until FROM users WHERE email = ?").get(email);
+  if (!u) return { error: "Нет игрока с такой почтой: " + email };
+  const from = u.vip_until && u.vip_until > Date.now() ? u.vip_until : Date.now();
+  db.prepare("UPDATE users SET vip_until = ? WHERE id = ?").run(from + days * DAY, u.id);
+  return { user: db.prepare(`SELECT ${USER_COLS} FROM users WHERE id = ?`).get(u.id) };
+}
+function vipOff(email) {
+  email = normEmail(email);
+  const u = db.prepare("SELECT id FROM users WHERE email = ?").get(email);
+  if (!u) return { error: "Нет игрока с такой почтой: " + email };
+  db.prepare("UPDATE users SET vip_until = NULL WHERE id = ?").run(u.id);
+  return { user: db.prepare(`SELECT ${USER_COLS} FROM users WHERE id = ?`).get(u.id) };
+}
+// все, у кого VIP когда-либо был выдан (и действующие, и истёкшие) — свежие сверху
+function vipList() { return db.prepare(`SELECT ${USER_COLS} FROM users WHERE vip_until IS NOT NULL ORDER BY vip_until DESC`).all(); }
+
+module.exports = { register, login, logout, userByToken, tokenFromReq, rename, setAvatar, listAvatars, setBio, isVip, vipAdd, vipOff, vipList };
