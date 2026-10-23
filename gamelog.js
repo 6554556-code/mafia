@@ -50,10 +50,12 @@ function safe(fn) {
 
 // Миграция: была ли партия сыграна в VIP (1) или бесплатно (0). Старые партии — NULL (до VIP, значит бесплатные).
 try { db.exec("ALTER TABLE games ADD COLUMN vip INTEGER"); } catch (_) {}
+// Миграция: сколько игроков было за столом. Старые партии — NULL (это была восьмёрка).
+try { db.exec("ALTER TABLE games ADD COLUMN size INTEGER"); } catch (_) {}
 
-const startGame = safe((userId, userName, role, vip) =>
-  Number(db.prepare("INSERT INTO games (user_id, user_name, role, started, vip) VALUES (?, ?, ?, ?, ?)")
-    .run(userId, userName, role, Date.now(), vip ? 1 : 0).lastInsertRowid));
+const startGame = safe((userId, userName, role, vip, size) =>
+  Number(db.prepare("INSERT INTO games (user_id, user_name, role, started, vip, size) VALUES (?, ?, ?, ?, ?, ?)")
+    .run(userId, userName, role, Date.now(), vip ? 1 : 0, size || 8).lastInsertRowid));
 
 const logMsg = safe((gameId, userId, day, kind, target, text) => {
   if (!gameId) return;
@@ -82,7 +84,7 @@ const logAiCall = safe((ms, provider, ok) =>
 //   Маньяк: дожил до победы мафии — тоже 2 (плохие победили вместе); погиб до победы мафии — 0.
 //   Мафия при победе маньяка-одиночки: дожила — 2, нет — 0 (маньяк побеждает сам за себя).
 function pointsFor(role, winner, alive) {
-  if (winner === "town") return ["civilian", "doctor", "komissar"].includes(role) ? (alive ? 2 : 1) : 0;
+  if (winner === "town") return !SIDE[role] ? (alive ? 2 : 1) : 0;   // деревня: мирный, доктор, комиссар, путана, бомж
   if (winner === "mafia") {
     if (role === "mafia") return alive ? 2 : 1;
     if (role === "maniac") return alive ? 2 : 0;
