@@ -691,7 +691,7 @@ function render(){
     seat.innerHTML=`
       <div class="ava" style="cursor:pointer" onclick="showBio('${(p.name||'').replace(/'/g,"\\'")}')" title="Досье">${(p.name||'?')[0]}${p.av?`<img src="avatars/${p.av}" alt="" onerror="this.remove()">`:''}</div>
       <div class="nm" style="color:${deep(p.c)}">${p.name}</div>
-      <div class="role${p.alive&&p.name!==myName?' secret':''}" style="color:${deep(p.c)}">${roleRu[p.role]||''}</div>
+      <div class="role${p.alive&&p.name!==myName&&!(myRole==='mafia'&&p.role==='mafia')?' secret':''}" style="color:${deep(p.c)}">${roleRu[p.role]||''}</div>
       <div class="bar"><i></i></div>`;
     seatsEl.appendChild(seat);
   });
@@ -867,6 +867,9 @@ function handle(e){
       hideInput();break;
     case "check_result":
       add(el("plaque check",`<div class="who">🔍 Твоя проверка</div><div><b>${esc(e.name)}</b> — ${roleRu[e.role]||esc(e.role)}</div>`));break;
+    case "mates":
+      if(e.names&&e.names.length) add(el("plaque mafia",`<div class="who"><span class="tag">мафия</span>🔪 ${e.names.length>1?"Твои напарники":"Твой напарник"}</div><div>${e.names.map(n=>`<b style="color:${colorOf(n)}">${esc(n)}</b>`).join(", ")}</div>`));
+      break;
     case "held":
       add(el("plaque held",`<div class="who">${esc(e.title)}</div><div>${esc(e.text)}</div>`));break;
     case "quit":
