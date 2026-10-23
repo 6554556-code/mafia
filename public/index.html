@@ -242,6 +242,23 @@
   .limitbox .vipsell{color:#7a5c12}
   .limitbox .buyvip{display:block;width:100%;margin-top:6px;padding:11px;font-weight:700;font-size:15px;
     background:var(--paper-2);color:var(--ink-soft);border:2px dashed var(--ink-soft);cursor:not-allowed}
+  /* плашка «к тебе пришла гостья» */
+  .held{background:#fde7ef;border-color:#d97a9b}
+  .held .who{color:#a0335c}
+  /* VIP: досрочное завершение — красный кружок в углу ленты, появляется, когда твой герой выбыл */
+  .feedWrap{position:relative}
+  .quitBtn{display:none;position:absolute;top:8px;right:18px;z-index:5;width:38px;height:38px;border-radius:50%;
+    background:#c8322a;border:2px solid var(--line);color:#fff;font-size:17px;line-height:1;cursor:pointer;
+    box-shadow:2px 2px 0 rgba(44,44,40,.3)}
+  .quitBtn.on{display:block}
+  .quitBtn:hover{filter:brightness(1.1)}
+  .quitAsk{display:none;position:absolute;top:52px;right:18px;z-index:6;width:230px;padding:10px;font-size:13px;line-height:1.45;
+    background:var(--paper);border:2px solid var(--line);box-shadow:3px 3px 0 rgba(44,44,40,.25)}
+  .quitAsk.on{display:block}
+  .qa-row{display:flex;gap:6px;margin-top:8px}
+  .qa-row button{flex:1;padding:7px 4px;font-family:inherit;font-size:12px;font-weight:700;cursor:pointer;border:2px solid var(--line)}
+  .qa-yes{background:#c8322a;color:#fff}
+  .qa-no{background:var(--paper-2);color:var(--ink)}
   /* памятка роли */
   .memo{background:#fff8e1;border-color:#d4bd4c;font-size:13px;line-height:1.55}
   .memo-hint{margin-top:6px;font-size:11px;color:var(--ink-soft)}
@@ -388,6 +405,9 @@
     </div>
 
     <div class="panel feedWrap">
+      <button class="quitBtn" id="quitBtn" title="Завершить партию досрочно" onclick="askQuit()">🏳</button>
+      <div class="quitAsk" id="quitAsk">Завершить партию досрочно? Результат не засчитается.
+        <div class="qa-row"><button class="qa-yes" onclick="doQuit(this)">Да, завершить</button><button class="qa-no" onclick="closeQuit()">Нет</button></div></div>
       <div class="feed" id="feed"></div>
     </div>
 
@@ -498,6 +518,21 @@ const ROLE_MEMO={
 };
 const memoOf=r=>(ROLE_MEMO[r]||"").replace(", комиссару, бомжу", tableSetup&&tableSetup.bomzh?", комиссару, бомжу":" и комиссару")+(r&&r!=="mafia"&&r!=="maniac"?" Деревня побеждает, когда выбыли вся мафия и маньяк.":"");
 let myRole=null;
+let isVip=false, gameOver=false;
+// кружок виден, только если: VIP, твой герой выбыл, партия ещё идёт
+function updateQuit(){
+  const me=players.find(p=>p.name===myName);
+  const show=isVip && !gameOver && !!me && !me.alive;
+  document.getElementById('quitBtn').classList.toggle('on',show);
+  if(!show) closeQuit();
+}
+function askQuit(){ document.getElementById('quitAsk').classList.toggle('on'); }
+function closeQuit(){ document.getElementById('quitAsk').classList.remove('on'); }
+async function doQuit(btn){
+  btn.disabled=true; btn.textContent='Завершаю…';
+  try{ const r=await fetch('/quit',{method:'POST'}); if(!r.ok) throw 0; }
+  catch(_){ btn.disabled=false; btn.textContent='Да, завершить'; toast('Не получилось завершить — попробуй ещё раз'); }
+}
 const colorOf=n=>{const p=players.find(x=>x.name===n);return p?deep(p.c):"#333";};
 
 // ── отправка действия человека серверу (обратный канал) ──
@@ -729,7 +764,7 @@ function chipsHtml(t, prev){
   return ROLE_ORDER.filter(r=>t[r]).map(r=>`<span class="st-chip r-${r}${prev&&!prev[r]?' new':''}">${roleIco[r]} ${r==='civilian'?'Мирные':roleRu[r]}${t[r]>1?' ×'+t[r]:''}</span>`).join('');
 }
 async function showSetup(){
-  players=[]; tableSetup=null; feed.innerHTML=""; render(); hideInput();
+  players=[]; tableSetup=null; myRole=null; feed.innerHTML=""; render(); hideInput(); updateQuit();
   dayLabel.textContent="День 1"; dayChip.classList.remove('has-role');
   let d=null; try{ d=await (await fetch('/setup')).json(); }catch(_){}
   if(!d||!d.tables){ add(el("narr","Не удалось загрузить настройки партии — обнови страницу")); return; }
@@ -807,9 +842,10 @@ function handle(e){
     case "atmo":
       add(el("atmo",esc(e.text)));break;
     case "reset":
+      gameOver=false; updateQuit();
       players=[];feed.innerHTML="";render();dayLabel.textContent="День 1";dayChip.classList.remove('has-role');hideInput();break;
     case "eye_state":
-      setEyeAllowed(!!e.open); setVipBadge(e.premium ? (e.vipUntil||1) : null); break;
+      isVip=!!e.premium; setEyeAllowed(!!e.open); setVipBadge(e.premium ? (e.vipUntil||1) : null); break;
     case "lobby":
       showSetup();break;
     case "limit":
@@ -831,6 +867,14 @@ function handle(e){
       hideInput();break;
     case "check_result":
       add(el("plaque check",`<div class="who">🔍 Твоя проверка</div><div><b>${esc(e.name)}</b> — ${roleRu[e.role]||esc(e.role)}</div>`));break;
+    case "held":
+      add(el("plaque held",`<div class="who">${esc(e.title)}</div><div>${esc(e.text)}</div>`));break;
+    case "quit":
+      gameOver=true; updateQuit(); hideInput();
+      try{ if(src) src.close(); }catch(_){}
+      showSetup();                                     // чистит ленту и рисует экран новой партии…
+      add(el("narr","🏳 Партия завершена досрочно — не засчитана"));   // …а итог ставим над ним
+      break;
     case "visit_result":
       add(el("plaque check",`<div class="who">🌹 Твой визит</div><div>${esc(e.text.replace(/^🌹\s*/,""))}</div>`));break;
     case "watch_result":{
@@ -846,7 +890,7 @@ function handle(e){
     case "day":
       dayLabel.textContent="День "+e.day;break;
     case "dead":{
-      const p=players.find(x=>x.name===e.name);if(p){p.alive=false;if(e.role)p.role=e.role;}render();break;}
+      const p=players.find(x=>x.name===e.name);if(p){p.alive=false;if(e.role)p.role=e.role;}render();updateQuit();break;}
     case "narrator":
       add(el("narr",esc(e.text)));break;
     case "say":{
@@ -873,6 +917,7 @@ function handle(e){
     case "vote":
       add(el("vote",`${esc(e.voter)} → <b>${esc(e.target)}</b>`+(e.reason?` · ${esc(e.reason)}`:"")));break;
     case "gameover":
+      gameOver=true; updateQuit();
       add(el("over",esc(e.text)));showReplay();break;
     case "score":{
       const line=document.createElement('div'); line.className='score-line ev';
