@@ -96,7 +96,7 @@ function sendTo(S, res, ev) { const v = viewFor(S, ev); if (v) res.write(`data: 
 // послать событие вкладкам ТЕКУЩЕЙ партии (и запомнить в её буфер)
 function broadcast(ev) {
   const S = CUR();
-  if (!S) return;
+  if (!S || S.aborted) return;
   S.eventBuffer.push(ev);
   S.clients.forEach((res) => sendTo(S, res, ev));
   // игрок выбыл из игры или партия окончена — открываем глаз; вкладка перечитает партию уже со всеми секретами
@@ -219,6 +219,22 @@ function startWeb() {
   app.get("/me", (req, res) => {
     const user = auth.userByToken(auth.tokenFromReq(req));
     res.json({ user, account: user ? account(user) : null });
+  });
+
+  // VIP завершает партию досрочно (когда его герой уже выбыл): результат не засчитывается
+  app.post("/quit", (req, res) => {
+    const me = auth.userByToken(auth.tokenFromReq(req));
+    const S = me && sessions.get(me.id);
+    if (!S || !auth.isVip(me)) return res.status(403).json({ error: "Только для VIP" });
+    const hp = S.G && S.G.players.find((p) => p.human);
+    if (S.finishedAt || S.aborted || !hp || hp.alive) return res.status(400).json({ error: "Сейчас завершить нельзя" });
+    als.run(S, () => broadcast({ type: "quit" }));        // последнее событие партии — дальше лента молчит
+    S.aborted = true;                                    // ИИ больше не зовём, движок тихо останавливается
+    if (S.pending) { const p = S.pending; S.pending = null; p.reject(abortError()); }
+    gamelog.quitGame(S.gameId);                          // в журнале — «завершена досрочно», в таблицу и лимит не идёт
+    sessions.delete(me.id);                              // следующий заход — сразу экран новой партии
+    console.log(DIM(`🏳 игрок #${me.id} завершил партию досрочно`));
+    res.json({ ok: true });
   });
 
   // Экран перед партией: какие столы бывают и что доступно этому игроку
@@ -817,7 +833,8 @@ async function aiDoctorWhisper(doctor, rec) {
 }
 
 let WARNED = false;
-function warn(e) { if (!WARNED) { console.log(A(203, `⚠ Ошибка модели: ${e.message}. Дальше ходы идут наугад.`)); WARNED = true; } }
+function warn(e) { const S = CUR(); if (S && S.aborted) return;   // партию бросили/завершили — это не поломка модели
+  if (!WARNED) { console.log(A(203, `⚠ Ошибка модели: ${e.message}. Дальше ходы идут наугад.`)); WARNED = true; } }
 
 // ── Личка ───────────────────────────────────────────────────────────────
 function postPM(channel, from, parts, text) {
@@ -923,12 +940,19 @@ async function atmo(kind) {
 // ── Фазы ────────────────────────────────────────────────────────────────
 // Что видит бомж у дома: нейтральные действия, по которым роль не угадать (настоящее время — без «он/она»)
 const WITNESS = ["крадётся к двери", "заходит в дом и выходит под утро", "стоит под окном", "стучит и входит", "оглядывается у калитки", "быстро проходит к крыльцу"];
-const BLOCK_NOTE = "🌹 Этой ночью тебе не удалось выйти из дома — к тебе пришла гостья.";
+// что теряет игрок, к которому пришла путана (заголовок плашки — «К тебе пришла гостья»)
+const BLOCK_TEXT = {
+  mafia: "Этой ночью ты не выходишь из дома. Без тебя мафия на дело не идёт.",
+  maniac: "Этой ночью ты никого не убиваешь.",
+  doctor: "Этой ночью ты никого не лечишь.",
+  komissar: "Этой ночью проверки не будет. Шепнуть союзнику можно.",
+  bomzh: "Этой ночью ты не дежуришь.",
+};
 // гостья-путана сорвала игроку ночной ход: запоминаем (ИИ увидит в своём досье), человеку — плашка
-function blockedNotice(p, extra) {
+function blockedNotice(p) {
   G.priv[p.name].blocked.push(G.day);
   secretAct(`🌹 у путаны в гостях: ${p.name} — ночной ход сорван`);
-  if (p.human) broadcast({ type: "note", text: BLOCK_NOTE + (extra || "") });
+  if (p.human) broadcast({ type: "held", title: "🌹 К тебе пришла гостья", text: BLOCK_TEXT[p.role] || "Этой ночью ты не выходишь из дома." });
 }
 const rnd = (a) => a[(Math.random() * a.length) | 0];
 const NIGHT_ROLES = ["mafia", "maniac", "doctor", "komissar", "bomzh"];   // у кого ночью есть ход — его путана и «задерживает»
@@ -979,10 +1003,10 @@ async function doNight() {
     const held = mafia.find(blocked);                    // путана держит кого-то из мафии — без своего на дело не идут
     const active = held ? [] : mafia;
     if (held) {
-      blockedNotice(held, " Без тебя мафия этой ночью на дело не идёт.");
+      blockedNotice(held);
       mafia.filter((m) => m !== held).forEach((m) => {
         G.priv[m.name].notes.push(`[ночь ${G.day}] путана держит напарника (${held.name}) — этой ночью мафия на дело не пошла`);
-        if (m.human) broadcast({ type: "note", text: `🌹 Путана держит твоего напарника: ${held.name}. Этой ночью мафия на дело не идёт.` });
+        if (m.human) broadcast({ type: "held", title: "🌹 Путана держит твоего напарника", text: `${held.name} не выходит из дома — мафия этой ночью без дела.` });
       });
     }
     const killable = alive.filter((p) => p.role !== "mafia");
