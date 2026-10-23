@@ -25,7 +25,7 @@ const ROLE = { mafia: "Мафия", maniac: "Маньяк", komissar: "Коми�
 const WIN = { town: "Деревня", mafia: "Мафия", maniac: "Маньяк" };
 const KIND = { say: "за столом", vote: "голос", whisper: "шёпот", whisper_reply: "ответ на шёпот", doc_whisper: "шёпот доктора", mafia_say: "напарнику-мафии" };
 
-const status = (g) => g.finished ? "доиграна" : now - g.started > ABANDON_MS ? "брошена" : "идёт";
+const status = (g) => g.finished ? "доиграна" : g.quit ? "завершена досрочно" : now - g.started > ABANDON_MS ? "брошена" : "идёт";
 const pct = (a, b) => b ? Math.round((100 * a) / b) + "%" : "—";
 const avg = (a, b) => b ? (a / b).toFixed(1).replace(".0", "") : "—";
 const sec = (ms) => ms == null ? "—" : (ms / 1000).toFixed(1) + " с";
@@ -71,11 +71,12 @@ function summary({ users, games, dUsers, dGames, dMsgs }) {
   // партии за сутки
   const fin = dGames.filter((g) => g.finished);
   const aband = dGames.filter((g) => status(g) === "брошена").length;
-  const going = dGames.length - fin.length - aband;
+  const quit = dGames.filter((g) => g.quit).length;
+  const going = dGames.length - fin.length - aband - quit;
   const withMsgs = dGames.filter((g) => g.msgs > 0).length;
   const totalTexts = dGames.reduce((s, g) => s + g.msgs, 0);
   L.push("", "🎲 Партии за сутки");
-  L.push(`Всего: ${dGames.length} · Доиграно: ${fin.length} · Брошено: ${aband}${going ? ` · Идёт сейчас: ${going}` : ""}`);
+  L.push(`Всего: ${dGames.length} · Доиграно: ${fin.length} · Брошено: ${aband}${quit ? ` · Завершены досрочно (VIP): ${quit}` : ""}${going ? ` · Идёт сейчас: ${going}` : ""}`);
   L.push(`Средняя длина: ${avg(fin.reduce((s, g) => s + (g.days || 0), 0), fin.length)} дн.`);
   L.push(`Писали в чат: в ${pct(withMsgs, dGames.length)} партий · реплик за партию в среднем: ${avg(totalTexts, dGames.length)}`);
 
