@@ -173,7 +173,7 @@ function setBio(userId, bio) {
   let age = String(bio.age ?? "").trim();
   if (age === "") age = null;
   else {
-    if (!/^\d{1,2}$/.test(age) || +age < 10 || +age > 99) return { error: "Возраст — число от 10 до 99 (или оставь пустым)" };
+    if (!/^\d{1,2}$/.test(age) || +age < 18 || +age > 99) return { error: "Возраст — число от 18 до 99 (или оставь пустым): игра 18+" };
     age = +age;
   }
   const job = cleanBio(bio.job), hobby = cleanBio(bio.hobby);
