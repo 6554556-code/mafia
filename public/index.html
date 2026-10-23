@@ -146,7 +146,7 @@
 
   /* ── ряд участников: сетка до 8 в ряд, дальше 2-й ряд (без скрола) ── */
   .seatsWrap{padding:5px}
-  .seats{display:grid;grid-template-columns:repeat(8,1fr);gap:3px}
+  .seats{display:grid;grid-template-columns:repeat(var(--cols,8),1fr);gap:3px}
   .seat{text-align:center;position:relative;min-width:0}
   .ava{
     width:100%;aspect-ratio:5/4;margin:0 auto;position:relative;overflow:hidden;
@@ -242,6 +242,29 @@
   .limitbox .vipsell{color:#7a5c12}
   .limitbox .buyvip{display:block;width:100%;margin-top:6px;padding:11px;font-weight:700;font-size:15px;
     background:var(--paper-2);color:var(--ink-soft);border:2px dashed var(--ink-soft);cursor:not-allowed}
+  /* ── экран перед партией ── */
+  .setupbox{background:var(--paper);border:2px solid var(--line);padding:12px 12px 14px;box-shadow:3px 3px 0 rgba(44,44,40,.15)}
+  .st-title{text-align:center;font-weight:700;font-size:16px;margin-bottom:8px}
+  .st-block{border-top:2px dashed #cfcabc;padding-top:10px;margin-top:10px}
+  .st-block:first-of-type{border-top:0;margin-top:0;padding-top:0}
+  .st-size{font-size:14px;margin-bottom:6px}
+  .st-size b{font-size:18px}
+  .st-chips{display:flex;flex-wrap:wrap;gap:5px;margin:6px 0 10px}
+  .st-chip{font-size:12px;padding:3px 7px;border:2px solid var(--line);background:var(--paper-2);white-space:nowrap}
+  .st-chip.r-mafia,.st-chip.r-maniac{color:#b5352c;border-color:#d98f8c;background:var(--mafia-bg)}
+  .st-chip.new{animation:chipnew .9s ease-out;border-color:#a6791f;background:#fff3c4}
+  @keyframes chipnew{0%{transform:scale(.6);opacity:0}60%{transform:scale(1.12)}100%{transform:none;opacity:1}}
+  .st-vip-title{font-weight:700;color:#7a5c12;margin-bottom:6px}
+  .st-vip-title .soon{font-weight:600;font-size:11px;color:var(--ink-soft);border:1px dashed var(--ink-soft);padding:0 5px;margin-left:4px}
+  .st-vip input[type=range]{width:100%;height:28px;accent-color:var(--mafia-tx);cursor:pointer;margin:0 0 2px}
+  .st-lbl{font-size:12px;color:var(--ink-soft);margin:2px 0 5px}
+  .st-pick{display:flex;flex-wrap:wrap;gap:5px;margin-bottom:6px}
+  .st-role{font-family:inherit;font-size:12px;padding:5px 8px;border:2px solid var(--line);background:var(--paper-2);cursor:pointer}
+  .st-role.on{background:var(--mafia-tx);color:#fff}
+  .st-role:disabled{cursor:not-allowed}
+  .st-vip.locked{opacity:.55;filter:grayscale(.5)}
+  .st-vip.locked input[type=range]{cursor:not-allowed}
+  .st-note{font-size:12px;color:#7a5c12;text-align:center;margin-top:6px;line-height:1.45}
   .ava-lock{font-size:12px;color:#7a5c12;margin:2px 0 6px}
   .ava-grid.locked .ava-opt{opacity:.45;cursor:not-allowed;filter:grayscale(.6)}
   .ava-grid.locked .ava-opt:hover{border-color:var(--line)}
@@ -454,7 +477,8 @@ const youRoleEl=document.getElementById('youRole');
 let players=[];            // [{name,c,role,alive}]
 let tableSetup=null;       // состав стола {mafia:2,...} — публичен; живых по ролям считаем без подсматривания
 let myName=null;           // имя человека за столом
-const roleRu={mafia:"Мафия",maniac:"Маньяк",komissar:"Комиссар",doctor:"Доктор",civilian:"Мирный"};
+const roleRu={mafia:"Мафия",maniac:"Маньяк",komissar:"Комиссар",doctor:"Доктор",civilian:"Мирный",putana:"Путана",bomzh:"Бомж"};
+const roleIco={mafia:"🔪",maniac:"🩸",komissar:"🔍",doctor:"🩺",civilian:"🙂",putana:"🌹",bomzh:"🍾"};
 const colorOf=n=>{const p=players.find(x=>x.name===n);return p?deep(p.c):"#333";};
 
 // ── отправка действия человека серверу (обратный канал) ──
@@ -506,6 +530,21 @@ function showInput(e){
       });
     }
     inputbar.classList.add('on');
+  } else if(kind==="visit"){
+    inputLbl.textContent="Ночь. К кому пойдёшь? Его ночной ход сорвётся";
+    voteMode.style.display="";
+    voteReason.style.display="none";
+    nameButtons(voteBtns, e.candidates, (name)=>{ hideInput(); sendAction({target:name}); });
+    if(e.last){   // к кому ходила прошлой ночью — можно снова
+      voteBtns.querySelectorAll('.votebtn').forEach(b=>{ if(b.textContent===e.last){ b.classList.add('suggested'); b.textContent="🔁 "+e.last; } });
+    }
+    inputbar.classList.add('on');
+  } else if(kind==="watch"){
+    inputLbl.textContent="Ночь. У чьего дома дежуришь?";
+    voteMode.style.display="";
+    voteReason.style.display="none";
+    nameButtons(voteBtns, e.candidates, (name)=>{ hideInput(); sendAction({target:name}); });
+    inputbar.classList.add('on');
   } else if(kind==="heal"){
     inputLbl.textContent="Ночь. Кого лечить?";
     voteMode.style.display="";
@@ -535,17 +574,17 @@ function showInput(e){
     whisperText.oninput=toggle; toggle();
     inputbar.classList.add('on'); whisperText.focus();
   } else if(kind==="mafia_say"){
-    inputLbl.textContent="Сказать напарнику "+(e.to||"")+"? (жертва выбрана)";
+    inputLbl.textContent=(e.many?"Сказать напарникам ":"Сказать напарнику ")+(e.to||"")+"? (жертва выбрана)";
     whisperMode.style.display="";
     whisperText.value="";
-    whisperText.placeholder="Что шепнуть напарнику…";
+    whisperText.placeholder=e.many?"Что шепнуть напарникам…":"Что шепнуть напарнику…";
     nameButtons(whisperBtns, [e.to], (name)=>{
       const t=whisperText.value.trim();
       if(!t){ whisperText.focus(); return; }
       hideInput(); sendAction({text:t});
     });
     const first=whisperBtns.querySelector('.votebtn');
-    if(first) first.textContent="🔒 Шепнуть "+(e.to||"");
+    if(first) first.textContent=e.many?"🔒 Шепнуть своим":"🔒 Шепнуть "+(e.to||"");
     document.getElementById('btnNoWhisper').textContent="Пропустить";
     const toggle=()=>{ const on=whisperText.value.trim().length>0;
       whisperBtns.querySelectorAll('.votebtn').forEach(b=>b.classList.toggle('off',!on)); };
@@ -591,6 +630,7 @@ sayText.addEventListener('keydown',(e)=>{ if(e.key==="Enter")submitSay(); });
 
 function render(){
   seatsEl.innerHTML="";
+  seatsEl.style.setProperty('--cols', players.length>8 ? Math.ceil(players.length/2) : 8);   // 9–12 игроков — два ровных ряда
   players.forEach(p=>{
     const seat=document.createElement('div');
     seat.className="seat"+(p.alive?"":" dead")+(p.name===myName?" me":"");
@@ -614,6 +654,8 @@ function renderSummary(){
   const counts=[["Мафия","mafia","bad"],["Маньяк","maniac","bad"]];
   // роли-одиночки: показываем ✓ (кто-то жив) / ✗ (выбыл).
   const flags=[["🔍 Комиссар","komissar"],["🩺 Доктор","doctor"]];
+  if(tableSetup&&tableSetup.putana) flags.push(["🌹 Путана","putana"]);
+  if(tableSetup&&tableSetup.bomzh) flags.push(["🍾 Бомж","bomzh"]);
   const parts=[`<span>Живых: <b>${alive.length}</b></span>`];
   counts.forEach(([lbl,r,cls])=>parts.push(`<span class="${cls}">${lbl}: <b>${c(r)}</b></span>`));
   flags.forEach(([lbl,r])=>parts.push(
@@ -658,6 +700,67 @@ function limitBox(a){
     `<button class="buyvip pixel" disabled>👑 Купить VIP (скоро)</button>`;
   return d;
 }
+// ── Экран перед партией: бесплатно — классическая восьмёрка; VIP — ползунок размера стола и выбор роли ──
+const SETUP_KEY='mafia.setup';
+function loadPrefs(){ try{ return JSON.parse(localStorage.getItem(SETUP_KEY)||'{}')||{}; }catch(_){ return {}; } }
+function savePrefs(p){ try{ localStorage.setItem(SETUP_KEY, JSON.stringify(p)); }catch(_){} }
+const ROLE_ORDER=["mafia","maniac","komissar","doctor","putana","bomzh","civilian"];
+// фишки состава; «новенькие» (которых не было на столе на одного меньше) подпрыгивают
+function chipsHtml(t, prev){
+  return ROLE_ORDER.filter(r=>t[r]).map(r=>`<span class="st-chip r-${r}${prev&&!prev[r]?' new':''}">${roleIco[r]} ${r==='civilian'?'Мирные':roleRu[r]}${t[r]>1?' ×'+t[r]:''}</span>`).join('');
+}
+async function showSetup(){
+  players=[]; tableSetup=null; feed.innerHTML=""; render(); hideInput();
+  dayLabel.textContent="День 1"; dayChip.classList.remove('has-role');
+  let d=null; try{ d=await (await fetch('/setup')).json(); }catch(_){}
+  if(!d||!d.tables){ add(el("narr","Не удалось загрузить настройки партии — обнови страницу")); return; }
+  const a=d.account||{}, vip=!!a.vip;
+  setVipBadge(vip?(a.vipUntil||1):null);
+  setEyeAllowed(vip);                                 // у VIP глаз без замочка и до начала партии
+  const prefs=loadPrefs();
+  let size=vip?Math.min(d.max,Math.max(d.min,+prefs.size||d.min)):d.max;   // бесплатному в витрине VIP показываем самый большой стол
+  let role=vip?(prefs.role||null):null;
+  const box=document.createElement('div'); box.className='setupbox ev'; box.id='setupBox';
+  box.innerHTML=`<div class="st-title">🎲 Новая партия</div>`+
+    (vip?'':`<div class="st-block"><div class="st-size"><b>${d.min}</b> игроков</div><div class="st-chips">${chipsHtml(d.tables[d.min])}</div>
+      <button class="replay pixel" id="stPlay">▶ Играть</button></div>`)+
+    `<div class="st-block st-vip${vip?'':' locked'}">
+      <div class="st-vip-title">👑 VIP-стол${vip?'':'<span class="soon">скоро</span>'}</div>
+      <div class="st-size">Игроков: <b id="stN"></b></div>
+      <input type="range" id="stRange" min="${d.min}" max="${d.max}" step="1" value="${size}"${vip?'':' disabled'}>
+      <div class="st-chips" id="stChips"></div>
+      <div class="st-lbl">Твоя роль</div>
+      <div class="st-pick" id="stPick"></div>
+      ${vip?'<button class="replay pixel" id="stPlayVip">▶ Играть</button>'
+           :`<div class="st-note">Стол до ${d.max} игроков, путана и бомж, выбор своей роли, глаз бога с первой минуты</div>`}
+    </div>`;
+  add(box);
+  const rng=box.querySelector('#stRange');
+  const draw=()=>{
+    const n=+rng.value, t=d.tables[n];
+    box.querySelector('#stN').textContent=n;
+    box.querySelector('#stChips').innerHTML=chipsHtml(t, n>d.min?d.tables[n-1]:null);
+    if(role&&!t[role]) role=null;                     // такой роли на этом столе нет — снова «случайно»
+    const pick=box.querySelector('#stPick'); pick.innerHTML='';
+    [null,...ROLE_ORDER.filter(r=>t[r])].forEach(r=>{
+      const b=document.createElement('button');
+      b.className='st-role'+(r===role?' on':''); b.disabled=!vip;
+      b.textContent=r?roleIco[r]+' '+roleRu[r]:'🎲 Случайно';
+      b.onclick=()=>{ role=r; draw(); };
+      pick.appendChild(b);
+    });
+  };
+  rng.oninput=draw; draw();
+  const go=async(sz,rl,btn)=>{
+    btn.disabled=true; btn.textContent='Раздаём роли…';
+    if(vip) savePrefs({size:sz,role:rl});
+    try{ await fetch('/newgame',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({size:sz,role:rl})}); }catch(_){}
+    location.reload();
+  };
+  const p1=box.querySelector('#stPlay'); if(p1) p1.onclick=()=>go(d.min,null,p1);
+  const p2=box.querySelector('#stPlayVip'); if(p2) p2.onclick=()=>go(+rng.value,role,p2);
+}
+
 // строка под очками: VIP — до какого числа; бесплатный — сколько сыграно сегодня
 function acctLine(a){
   const d=document.createElement('div'); d.className='acct-line ev';
@@ -680,6 +783,8 @@ function handle(e){
       players=[];feed.innerHTML="";render();dayLabel.textContent="День 1";dayChip.classList.remove('has-role');hideInput();break;
     case "eye_state":
       setEyeAllowed(!!e.open); setVipBadge(e.premium ? (e.vipUntil||1) : null); break;
+    case "lobby":
+      showSetup();break;
     case "limit":
       // лимит на сегодня исчерпан: партии нет — только плашка
       players=[];feed.innerHTML="";render();hideInput();
@@ -697,6 +802,9 @@ function handle(e){
       hideInput();break;
     case "check_result":
       add(el("plaque check",`<div class="who">🔍 Твоя проверка</div><div><b>${esc(e.name)}</b> — ${roleRu[e.role]||esc(e.role)}</div>`));break;
+    case "watch_result":{
+      const who=(e.seen||[]).length ? e.seen.map(x=>`<b style="color:${colorOf(x.name)}">${esc(x.name)}</b> ${esc(x.act)}`).join(", ")+"." : "никто не приходил.";
+      add(el("plaque check",`<div class="who">🍾 Твоё дежурство</div><div>У дома <b>${esc(e.name)}</b>: ${who}</div>`));break;}
     case "note":
       add(el("narr",esc(e.text)));break;
     case "roster":
@@ -875,11 +983,7 @@ function showReplay(){
   if(document.getElementById('replayBtn')) return;
   const b=document.createElement('button');
   b.id='replayBtn'; b.className='replay pixel'; b.textContent='🔄 Сыграть ещё';
-  b.onclick=async()=>{
-    b.disabled=true; b.textContent='Запускаем новую…';
-    try{ await fetch('/newgame',{method:'POST'}); }catch(_){}
-    location.reload();
-  };
+  b.onclick=()=>{ try{ if(src) src.close(); }catch(_){} showSetup(); };   // сначала экран выбора, партия — по «Играть»
   add(b);
 }
 
