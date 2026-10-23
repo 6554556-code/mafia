@@ -719,8 +719,12 @@ function renderSummary(){
 }
 
 function atBottom(){return feed.scrollHeight-feed.scrollTop-feed.clientHeight<60;}
+// «Прилипание» к низу ленты запоминаем по ТВОЕЙ прокрутке, а не пересчитываем при каждом сообщении:
+// когда снизу выезжает панель голосования, лента становится ниже, но ты при этом никуда не листала — держим низ.
+let stick=true;
+feed.addEventListener('scroll',()=>{ stick=atBottom(); },{passive:true});
+if(window.ResizeObserver) new ResizeObserver(()=>{ if(stick) feed.scrollTop=feed.scrollHeight; }).observe(feed);
 function add(node){
-  const stick=atBottom();
   node.classList.add('ev');
   feed.appendChild(node);
   if(stick) feed.scrollTop=feed.scrollHeight;
@@ -867,6 +871,8 @@ function handle(e){
       hideInput();break;
     case "check_result":
       add(el("plaque check",`<div class="who">🔍 Твоя проверка</div><div><b>${esc(e.name)}</b> — ${roleRu[e.role]||esc(e.role)}</div>`));break;
+    case "mafia_pick":
+      add(el("plaque mafia",`<div class="who"><span class="tag">мафия</span>🔪 ${esc(e.from)} выбирает жертву</div><div><b style="color:${colorOf(e.target)}">${esc(e.target)}</b></div>`));break;
     case "mates":
       if(e.names&&e.names.length) add(el("plaque mafia",`<div class="who"><span class="tag">мафия</span>🔪 ${e.names.length>1?"Твои напарники":"Твой напарник"}</div><div>${e.names.map(n=>`<b style="color:${colorOf(n)}">${esc(n)}</b>`).join(", ")}</div>`));
       break;
@@ -937,7 +943,7 @@ function handle(e){
           if(!document.getElementById('limitBox')) add(limitBox(e.acct));
         }
       }
-      if(atBottom()) feed.scrollTop=feed.scrollHeight;
+      if(stick) feed.scrollTop=feed.scrollHeight;
       break;}
   }
 }
