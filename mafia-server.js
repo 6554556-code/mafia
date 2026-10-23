@@ -753,6 +753,9 @@ async function aiVote(p) {
   const prompt = `${baseCtx(p)}\n\nГолосование: кого казнить? Из живых (не себя): ${list.join(", ")}.\n` +
     `Дай ДВЕ причины:\n— "why": настоящая, тайная (только для тебя, вслух не звучит).\n` +
     `— "say": что ты говоришь ВСЛУХ при всех, объявляя голос — коротко, до 12 слов, в своём стиле и СВОИМИ словами: не повторяй дословно свою дневную реплику и не копируй чужие фразы из обсуждения.` +
+    (p.role === "mafia" ? (() => { const m = G.players.filter((x) => x.role === "mafia" && x.alive && x !== p).map((x) => x.name);
+      return m.length ? ` Твои напарники-мафия: ${m.join(", ")} — НЕ голосуй против них. Исключение: если почти весь стол уже голосует против напарника и его не спасти — можешь присоединиться, чтобы не спалиться.` : ""; })() : "") +
+    ` "say" — про того же человека, что в "target": не называй вслух одного, а голосуй в другого.` +
     (dark ? ` Ты за тёмных: вслух спорь как честный мирный. НИКОГДА не упоминай напарника, свою роль, что тебе «выгодно», и не намекай на ночные дела — только подозрения, которые мог бы высказать любой мирный.` : "") +
     `\nОтветь ТОЛЬКО JSON: {"target":"Имя","why":"...","say":"..."}.`;
   try {
@@ -1021,7 +1024,7 @@ async function doNight() {
         suggest = dec.target;
         postPM("mafia", mates[0], mafia, dec.text);
       } else if (mates.length) {
-        postPM("mafia", mates[0], mafia, mates.length > 1 ? "Ты за старшего. Кого уберём этой ночью?" : "Ты за старшего, напарник. Кого уберём этой ночью?");
+        postPM("mafia", mates[0], mafia, mates.length > 1 ? `Я и ${mates.slice(1).map((m) => m.name).join(", ")} с тобой. Ты за старшего — кого уберём этой ночью?` : "Ты за старшего, напарник. Кого уберём этой ночью?");
       }
       const names = killable.map((p) => p.name);
       const ans = await awaitHuman("kill_mafia", { candidates: names, suggest });
@@ -1278,6 +1281,10 @@ async function gameLoop() {
   broadcast({ type: "reset" });
   broadcast({ type: "roster", day: G.day, setup: G.setup, players: G.players.map((p) => ({ name: p.name, c: p.c, av: p.av, role: p.role, alive: true, age: p.age, job: p.job, hobby: p.hobby, persona: p.persona })) });
   if (humanP) broadcast({ type: "you", name: humanP.name, role: humanP.role });
+  if (humanP && humanP.role === "mafia") {
+    const mates = G.players.filter((p) => p.role === "mafia" && p !== humanP).map((p) => p.name);
+    broadcast({ type: "mates", names: mates });
+  }
   if (humanP && CUR().userId) CUR().gameId = gamelog.startGame(CUR().userId, humanP.name, humanP.role, CUR().premium, G.players.length);   // журнал: партия началась
 
   console.log(BOLD(`\n════ МАФИЯ · провайдер: ${PROVIDER} · модель: ${PROVIDERS[PROVIDER].model} ════`));
