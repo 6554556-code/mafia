@@ -79,6 +79,22 @@ function summary({ users, games, dUsers, dGames, dMsgs }) {
   L.push(`Средняя длина: ${avg(fin.reduce((s, g) => s + (g.days || 0), 0), fin.length)} дн.`);
   L.push(`Писали в чат: в ${pct(withMsgs, dGames.length)} партий · реплик за партию в среднем: ${avg(totalTexts, dGames.length)}`);
 
+  // VIP и дневной лимит: сколько бесплатных доиграли свой лимит (дошли до «самого интересного места»)
+  // Считаем только БЕСПЛАТНЫЕ партии (vip ≠ 1): кто упёрся, а потом взял VIP, — тоже виден (это и есть покупка).
+  {
+    const FREE = Number(process.env.FREE_GAMES ?? 5);
+    let vipNow = 0;
+    try { vipNow = db.prepare("SELECT COUNT(*) AS n FROM users WHERE vip_until > ?").get(now).n; } catch (_) {}   // колонки ещё нет — VIP пока ни у кого
+    const perDay = new Map();   // "игрок|день МСК" → доиграно бесплатно
+    for (const g of games) if (g.finished && g.finished >= since && g.vip !== 1) {
+      const k = g.user_id + "|" + dayKey(g.finished); perDay.set(k, (perDay.get(k) || 0) + 1);
+    }
+    const hit = new Set([...perDay].filter(([, n]) => n >= FREE).map(([k]) => k.split("|")[0]));
+    const vipGames = dGames.filter((g) => g.vip === 1).length;
+    L.push("", "👑 VIP и лимит");
+    L.push(`Упёрлись в лимит ${FREE} партий: ${hit.size} игрок(ов) · VIP действует: ${vipNow} · VIP-партий за сутки: ${vipGames}`);
+  }
+
   if (fin.length) {
     L.push("", "🎭 Роль игрока → побед");
     for (const r of Object.keys(ROLE)) {
