@@ -6,6 +6,17 @@
 <title>МАФИЯ — игра с живыми ИИ</title>
 <meta name="description" content="Мафия против хитрых ИИ-персонажей: врут, спорят, блефуют. Вычисли мафию раньше, чем она вычислит тебя.">
 <meta name="theme-color" content="#0f1424">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="Мафия с ИИ">
+<meta property="og:locale" content="ru_RU">
+<meta property="og:url" content="https://mafia.friend-e.com/">
+<meta property="og:title" content="МАФИЯ — игра с живыми ИИ">
+<meta property="og:description" content="Мафия против хитрых ИИ-персонажей: врут, спорят, блефуют. Вычисли мафию раньше, чем она вычислит тебя.">
+<meta property="og:image" content="https://mafia.friend-e.com/img/og.jpg">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:image" content="https://mafia.friend-e.com/img/og.jpg">
 <link rel="preload" as="image" href="img/splash.jpg">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -46,6 +57,13 @@
   }
   .hot-login{left:21.5%;top:77.9%;width:57%;height:7.8%}
   .hot-rules{left:21.8%;top:86.7%;width:56.3%;height:6.6%}
+  /* кнопка «i» в правом нижнем углу — ведёт на страницу с ценами, контактами и документами */
+  .info-btn{position:absolute;left:81%;top:90.4%;width:12.2%;z-index:2;display:block;border-radius:8px;
+    -webkit-tap-highlight-color:transparent;transition:filter .12s, transform .08s}
+  .info-btn img{width:100%;height:auto}
+  .info-btn:hover{filter:brightness(1.12) drop-shadow(0 0 10px rgba(255,200,80,.55))}
+  .info-btn:active{transform:translateY(1px)}
+  .info-btn:focus-visible{outline:3px solid #ffd76a;outline-offset:2px}
   .hot:hover{background:rgba(255,240,200,.10);box-shadow:0 0 18px rgba(255,200,80,.45)}
   .hot:active{background:rgba(0,0,0,.18);transform:translateY(1px)}
   .hot:focus-visible{outline:3px solid #ffd76a;outline-offset:2px}
@@ -87,6 +105,7 @@
     color:#fff;background:rgba(181,53,44,.92);border:2px solid #fff;border-radius:50%;
     width:2.9em;height:2.9em;display:grid;place-items:center;box-shadow:0 2px 8px rgba(0,0,0,.5);pointer-events:none}
   .agree{margin-top:10px;font-size:12px;line-height:1.45;color:var(--ink-soft);text-align:center}
+  .agree a{color:var(--red)}
 
   /* правила */
   .rules h2{font-size:15px;margin:16px 0 6px;letter-spacing:.3px}
@@ -104,6 +123,7 @@
     <div class="age18" title="Игра для взрослых">18+</div>
     <button class="hot hot-login" aria-label="Вход" onclick="openSheet('auth')"></button>
     <button class="hot hot-rules" aria-label="Правила" onclick="openSheet('rules')"></button>
+    <a class="info-btn" href="info.html" aria-label="Цены, контакты, реквизиты и документы" title="Цены, контакты, документы"><img src="img/btn-info.png" width="111" height="109" alt="i"></a>
   </main>
 
   <!-- Вход / регистрация -->
@@ -129,7 +149,7 @@
       <input id="password" type="password" autocomplete="current-password" placeholder="минимум 6 символов">
 
       <button class="btn" id="submit">ВОЙТИ</button>
-      <div class="agree" id="agree18" style="display:none">Психологическая игра 18+. Регистрируясь, ты подтверждаешь, что тебе есть 18 лет.</div>
+      <div class="agree" id="agree18" style="display:none">Психологическая игра 18+. Регистрируясь, ты подтверждаешь, что тебе есть 18 лет, и принимаешь <a href="oferta.html" target="_blank">оферту</a> и <a href="privacy.html" target="_blank">политику конфиденциальности</a>.</div>
       <div class="msg" id="msg"></div>
     </div>
   </div>
@@ -157,7 +177,7 @@
       <h2>Кто побеждает</h2>
       <div class="role"><span class="i">🏆</span><span><b>Деревня</b> — когда убиты вся мафия и маньяк. <b>Мафия</b> — когда её не меньше, чем остальных. <b>Маньяк</b> — когда остался последним.</span></div>
 
-      <div class="role" style="margin-top:12px"><span class="i">👁</span><span><b>Глаз бога</b> показывает роли, мысли и шёпот всех игроков. Открывается, когда ты выбываешь из игры. С первой минуты — в Премиум.</span></div>
+      <div class="role" style="margin-top:12px"><span class="i">👁</span><span><b>Глаз бога</b> показывает роли, мысли и шёпот всех игроков. Открывается, когда ты выбываешь из игры. С первой минуты — в VIP.</span></div>
 
       <div class="tip">💡 Персонажи живые: врут, ссорятся, радуются и грустят. Настроение — тоже улика.</div>
 
@@ -217,6 +237,8 @@
     }
   }
   btn.onclick = go;
+  // прямая ссылка на правила: /auth.html#rules (из раздела «Документы»)
+  if (location.hash === "#rules") openSheet("rules");
   document.addEventListener("keydown", (e) => {
     if(e.key === "Escape") closeSheets();
     if(e.key === "Enter" && $("sheet-auth").classList.contains("on")) go();

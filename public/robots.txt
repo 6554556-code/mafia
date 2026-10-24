@@ -1,0 +1,7 @@
+User-agent: *
+Allow: /
+Disallow: /index.html
+Disallow: /events
+Disallow: /avatars/
+
+Sitemap: https://mafia.friend-e.com/sitemap.xml
