@@ -38,6 +38,9 @@ for (const col of ["bio_age INTEGER", "bio_job TEXT", "bio_hobby TEXT"]) {
 }
 // Миграция: VIP. vip_until = до какого момента действует (метка времени в мс); NULL = бесплатный.
 try { db.exec("ALTER TABLE users ADD COLUMN vip_until INTEGER"); } catch (_) {}
+// Миграция: щиты. shields — купленные (не сгорают); shield_gift — день (МСК), когда уже взят подарочный щит.
+try { db.exec("ALTER TABLE users ADD COLUMN shields INTEGER NOT NULL DEFAULT 0"); } catch (_) {}
+try { db.exec("ALTER TABLE users ADD COLUMN shield_gift TEXT"); } catch (_) {}
 // Какие поля пользователя отдаём наружу (пароль и прочее — никогда)
 const USER_COLS = "id, email, name, avatar, bio_age, bio_job, bio_hobby, vip_until";
 
@@ -210,4 +213,30 @@ function vipOff(email) {
 // все, у кого VIP когда-либо был выдан (и действующие, и истёкшие) — свежие сверху
 function vipList() { return db.prepare(`SELECT ${USER_COLS} FROM users WHERE vip_until IS NOT NULL ORDER BY vip_until DESC`).all(); }
 
-module.exports = { register, login, logout, userByToken, tokenFromReq, rename, setAvatar, listAvatars, setBio, isVip, vipAdd, vipOff, vipList };
+// ── Щиты ──
+// Каждый день — 1 подарочный щит (не копится: не потратил сегодня — завтра снова один). Купленные — на балансе, не сгорают.
+const mskDay = (t = Date.now()) => new Date(t + 3 * 3600e3).toISOString().slice(0, 10);
+function shieldInfo(u) {
+  const row = u && db.prepare("SELECT shields, shield_gift FROM users WHERE id = ?").get(u.id);
+  if (!row) return { bought: 0, gift: 0, total: 0 };
+  const gift = row.shield_gift === mskDay() ? 0 : 1;
+  return { bought: row.shields || 0, gift, total: (row.shields || 0) + gift };
+}
+// Потратить один щит: сначала подарочный, потом купленный. Одним запросом к базе — двойной клик не спишет дважды.
+function useShield(userId) {
+  const today = mskDay();
+  let r = db.prepare("UPDATE users SET shield_gift = ? WHERE id = ? AND (shield_gift IS NULL OR shield_gift != ?)").run(today, userId, today);
+  if (!r.changes) r = db.prepare("UPDATE users SET shields = shields - 1 WHERE id = ? AND shields > 0").run(userId);
+  if (!r.changes) return { error: "Щиты закончились" };
+  return { info: shieldInfo({ id: userId }) };
+}
+function shieldAdd(email, n) {
+  email = normEmail(email); n = Number(n);
+  if (!Number.isInteger(n) || n < 1 || n > 1000) return { error: "Щитов — целое число от 1 до 1000" };
+  const u = db.prepare("SELECT id FROM users WHERE email = ?").get(email);
+  if (!u) return { error: "Нет игрока с такой почтой: " + email };
+  db.prepare("UPDATE users SET shields = shields + ? WHERE id = ?").run(n, u.id);
+  return { user: db.prepare(`SELECT ${USER_COLS} FROM users WHERE id = ?`).get(u.id), info: shieldInfo(u) };
+}
+
+module.exports = { shieldInfo, useShield, shieldAdd, register, login, logout, userByToken, tokenFromReq, rename, setAvatar, listAvatars, setBio, isVip, vipAdd, vipOff, vipList };

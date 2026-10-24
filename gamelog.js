@@ -54,6 +54,9 @@ try { db.exec("ALTER TABLE games ADD COLUMN vip INTEGER"); } catch (_) {}
 try { db.exec("ALTER TABLE games ADD COLUMN size INTEGER"); } catch (_) {}
 // Миграция: партию завершили досрочно (VIP-кнопка). finished при этом остаётся пустым — в таблицу и лимит не идёт.
 try { db.exec("ALTER TABLE games ADD COLUMN quit INTEGER"); } catch (_) {}
+// Миграция: щиты в партии — сколько поставлено и сколько раз реально спасли
+try { db.exec("ALTER TABLE games ADD COLUMN shields INTEGER NOT NULL DEFAULT 0"); } catch (_) {}
+try { db.exec("ALTER TABLE games ADD COLUMN shield_saves INTEGER NOT NULL DEFAULT 0"); } catch (_) {}
 
 const startGame = safe((userId, userName, role, vip, size) =>
   Number(db.prepare("INSERT INTO games (user_id, user_name, role, started, vip, size) VALUES (?, ?, ?, ?, ?, ?)")
@@ -75,6 +78,9 @@ const finishGame = safe((gameId, role, winner, days, alive) => {
   db.prepare("UPDATE games SET finished = ?, winner = ?, won = ?, days = ?, alive = ? WHERE id = ?")
     .run(Date.now(), winner, won, days, alive ? 1 : 0, gameId);
 });
+
+const shieldUsed = safe((gameId) => { if (gameId) db.prepare("UPDATE games SET shields = shields + 1 WHERE id = ?").run(gameId); });
+const shieldSaved = safe((gameId) => { if (gameId) db.prepare("UPDATE games SET shield_saves = shield_saves + 1 WHERE id = ?").run(gameId); });
 
 const quitGame = safe((gameId) => {
   if (!gameId) return;
@@ -156,4 +162,4 @@ function finishedToday(userId) {
   catch (e) { console.error("журнал партий:", e.message); return 0; }   // журнал сломался — лимит не мешает играть
 }
 
-module.exports = { db, startGame, logMsg, finishGame, quitGame, logAiCall, pointsFor, leaderboard, invalidateLeaderboard, weekStart, dayStart, finishedToday };
+module.exports = { db, startGame, logMsg, finishGame, quitGame, shieldUsed, shieldSaved, logAiCall, pointsFor, leaderboard, invalidateLeaderboard, weekStart, dayStart, finishedToday };

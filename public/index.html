@@ -234,6 +234,10 @@
 
   /* ── VIP и дневной лимит ── */
   .title{position:relative}
+  .sh-badge{position:absolute;right:-9px;bottom:-11px;display:flex;align-items:center;gap:1px;font-size:12px;line-height:1;cursor:pointer;
+    background:var(--paper);border:2px solid var(--line);border-radius:10px;padding:1px 4px 1px 2px;font-family:var(--ui-font)}
+  .sh-badge b{font-size:11px}
+  .sh-badge.zero{opacity:.55}
   .vip-badge{position:absolute;right:-7px;top:-10px;font-size:15px;line-height:1;filter:drop-shadow(0 1px 0 rgba(44,44,40,.35))}
   .acct-line{text-align:center;font-size:12px;color:var(--ink-soft);padding:2px 0}
   .limitbox{background:var(--paper);border:2px solid var(--line);padding:14px 14px 12px;text-align:center;line-height:1.5;font-size:14px;
@@ -251,6 +255,15 @@
     background:#c8322a;border:2px solid var(--line);color:#fff;font-size:17px;line-height:1;cursor:pointer;
     box-shadow:2px 2px 0 rgba(44,44,40,.3)}
   .quitBtn.on{display:block}
+  .shieldBtn{display:none;position:absolute;top:8px;right:18px;z-index:5;width:40px;height:40px;border-radius:50%;
+    background:#2f6fb5;border:2px solid var(--line);color:#fff;font-size:18px;line-height:1;cursor:pointer;
+    box-shadow:2px 2px 0 rgba(44,44,40,.3);animation:shpulse 1.6s ease-in-out infinite}
+  .shieldBtn.on{display:block}
+  @keyframes shpulse{0%,100%{box-shadow:2px 2px 0 rgba(44,44,40,.3),0 0 0 0 #2f6fb500}50%{box-shadow:2px 2px 0 rgba(44,44,40,.3),0 0 0 5px #2f6fb555}}
+  @media (prefers-reduced-motion:reduce){.shieldBtn{animation:none}}
+  .qa-sh{background:#2f6fb5;color:#fff}
+  .shield-on{background:#e3eefa;border-color:#7aa5d6}
+  .shield-on .who{color:#2f6fb5}
   .quitBtn:hover{filter:brightness(1.1)}
   .quitAsk{display:none;position:absolute;top:52px;right:18px;z-index:6;width:230px;padding:10px;font-size:13px;line-height:1.45;
     background:var(--paper);border:2px solid var(--line);box-shadow:3px 3px 0 rgba(44,44,40,.25)}
@@ -388,7 +401,7 @@
   <div class="machine">
 
     <div class="panel topbar">
-      <div class="title pixel">МАФИЯ<span class="vip-badge" id="vipBadge" style="display:none" title="VIP">👑</span></div>
+      <div class="title pixel">МАФИЯ<span class="vip-badge" id="vipBadge" style="display:none" title="VIP">👑</span><span class="sh-badge" id="shBadge" onclick="shieldInfo()" title="Щиты">🛡<b id="shCount">0</b></span></div>
       <div class="chip day pixel" id="dayChip" title="Твоя роль — нажми для памятки" onclick="if(myRole&&ROLE_MEMO[myRole])toast(memoOf(myRole),9000)"><span class="day-role" id="youRole"></span><span class="day-num">☀ <span id="dayLabel">День 1</span></span></div>
       <div class="chip mode pixel locked" id="eyeBtn" onclick="toggleEye()" title="Откроется, когда выбудешь из игры · сразу — в VIP 👑"><span class="eye">👁</span><span class="eye-txt">Глаз бога</span></div>
       <div class="chip lb pixel" id="lbBtn" title="Турнирная таблица" onclick="openLeaderboard()">🏆</div>
@@ -405,6 +418,9 @@
     </div>
 
     <div class="panel feedWrap">
+      <button class="shieldBtn" id="shieldBtn" title="Поставить щит" onclick="askShield()">🛡</button>
+      <div class="quitAsk" id="shieldAsk"><span id="shieldAskTxt"></span>
+        <div class="qa-row"><button class="qa-sh" onclick="doShield(this)">Поставить</button><button class="qa-no" onclick="closeShield()">Нет</button></div></div>
       <button class="quitBtn" id="quitBtn" title="Завершить партию досрочно" onclick="askQuit()">🏳</button>
       <div class="quitAsk" id="quitAsk">Завершить партию досрочно? Результат не засчитается.
         <div class="qa-row"><button class="qa-yes" onclick="doQuit(this)">Да, завершить</button><button class="qa-no" onclick="closeQuit()">Нет</button></div></div>
@@ -527,6 +543,32 @@ function updateQuit(){
   const show=isVip && !gameOver && !!me && !me.alive;
   document.getElementById('quitBtn').classList.toggle('on',show);
   if(!show) closeQuit();
+}
+// ── Щиты ──
+let shLeft=0, shUsed=0, shMax=2, phase=null, phaseDay=0, shArmed=null;
+function setShields(n){ shLeft=n; document.getElementById('shCount').textContent=n; document.getElementById('shBadge').classList.toggle('zero',!n); updateShield(); }
+function shieldInfo(){
+  toast(`🛡 <b>Щит</b> спасает от смерти: ставь ночью или днём до голосования. Сгорает в любом случае — сработал он или нет. Не больше ${shMax} за партию.<br>У тебя: <b>${shLeft}</b>. Каждый день — 1 щит в подарок. Купить — скоро.`,8000);
+}
+function updateShield(){
+  const me=players.find(p=>p.name===myName);
+  const key=phase+":"+phaseDay;
+  const show=!gameOver && !!me && me.alive && (phase==="night"||phase==="day") && shArmed!==key && shUsed<shMax && shLeft>0;
+  document.getElementById('shieldBtn').classList.toggle('on',show);
+  if(!show) closeShield();
+}
+function askShield(){
+  document.getElementById('shieldAskTxt').textContent=(phase==="night"?"Поставить щит на эту ночь?":"Поставить щит на голосование?")+` Сгорит в любом случае. Останется: ${shLeft-1}.`;
+  document.getElementById('shieldAsk').classList.toggle('on');
+}
+function closeShield(){ document.getElementById('shieldAsk').classList.remove('on'); }
+async function doShield(btn){
+  btn.disabled=true;
+  try{ const r=await fetch('/shield',{method:'POST'}); const d=await r.json().catch(()=>({}));
+    if(!r.ok){ toast(d.error||'Щит не поставился'); closeShield(); updateShield(); }
+    else { shUsed=d.used; setShields(d.left); closeShield(); } }
+  catch(_){ toast('Сервер не отвечает'); }
+  btn.disabled=false;
 }
 function askQuit(){ document.getElementById('quitAsk').classList.toggle('on'); }
 function closeQuit(){ document.getElementById('quitAsk').classList.remove('on'); }
@@ -780,6 +822,7 @@ async function showSetup(){
   if(!d||!d.tables){ add(el("narr","Не удалось загрузить настройки партии — обнови страницу")); return; }
   const a=d.account||{}, vip=!!a.vip;
   setVipBadge(vip?(a.vipUntil||1):null);
+  if(typeof a.shields==="number") setShields(a.shields);
   setEyeAllowed(vip);                                 // у VIP глаз без замочка и до начала партии
   const prefs=loadPrefs();
   let size=vip?Math.min(d.max,Math.max(d.min,+prefs.size||d.min)):d.max;   // размер стола — только у VIP
@@ -852,11 +895,20 @@ function handle(e){
     case "atmo":
       add(el("atmo",esc(e.text)));break;
     case "reset":
-      gameOver=false; updateQuit(); stick=true;
+      gameOver=false; updateQuit(); stick=true; phase=null; shArmed=null; shUsed=0; updateShield();
       players=[];feed.innerHTML="";render();dayLabel.textContent="День 1";dayChip.classList.remove('has-role');hideInput();break;
+    case "phase":
+      phase=e.phase; phaseDay=e.day; updateShield();break;
+    case "shield":
+      // баланс здесь не трогаем: при перечитывании партии это событие старое — свежий баланс приходит в ответе сервера и в eye_state
+      shArmed=e.phase+":"+phaseDay; updateShield();
+      add(el("plaque shield-on",`<div class="who">🛡 Щит поставлен</div><div>${e.phase==="night"?"Этой ночью тебя не убить.":"На этом голосовании тебя не казнить."}</div>`));break;
     case "eye_state":
       if(e.open && !eyeAllowed && players.length) needRebuild=true;   // глаз открылся, пока связи не было
-      isVip=!!e.premium; setEyeAllowed(!!e.open); setVipBadge(e.premium ? (e.vipUntil||1) : null); break;
+      isVip=!!e.premium; setEyeAllowed(!!e.open);
+      if(e.shieldMax) shMax=e.shieldMax;
+      if(typeof e.shieldUsed==="number") shUsed=e.shieldUsed;
+      if(typeof e.shields==="number") setShields(e.shields); setVipBadge(e.premium ? (e.vipUntil||1) : null); break;
     case "lobby":
       if(!document.getElementById('setupBox')) showSetup();   // связь мигнула на экране выбора — выбор не сбрасываем
       break;
@@ -909,7 +961,7 @@ function handle(e){
     case "day":
       dayLabel.textContent="День "+e.day;break;
     case "dead":{
-      const p=players.find(x=>x.name===e.name);if(p){p.alive=false;if(e.role)p.role=e.role;}render();updateQuit();break;}
+      const p=players.find(x=>x.name===e.name);if(p){p.alive=false;if(e.role)p.role=e.role;}render();updateQuit();updateShield();break;}
     case "narrator":
       add(el("narr",esc(e.text)));break;
     case "say":{
@@ -936,7 +988,7 @@ function handle(e){
     case "vote":
       add(el("vote",`${esc(e.voter)} → <b>${esc(e.target)}</b>`+(e.reason?` · ${esc(e.reason)}`:"")));break;
     case "gameover":
-      gameOver=true; updateQuit();
+      gameOver=true; updateQuit(); updateShield();
       add(el("over",esc(e.text)));showReplay();break;
     case "score":{
       const line=document.createElement('div'); line.className='score-line ev';

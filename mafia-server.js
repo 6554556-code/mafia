@@ -13,7 +13,8 @@ const SHOW_SECRETS = true;   // печатать роли, тайные мысл
 const HUMAN = process.env.HUMAN === "1" || process.env.HUMAN === "true"; // за столом сидит человек
 const HUMAN_ROLE = process.env.HUMAN_ROLE || null;   // какую роль дать человеку (komissar/doctor/mafia/…); пусто = случайная
 const PACING_MS = Number(process.env.PACING_MS ?? 10000);         // пауза между ходами в мс (0 = максимально быстро)
-const FREE_GAMES = Number(process.env.FREE_GAMES ?? 5);   // сколько партий в сутки (по МСК) можно ДОИГРАТЬ без VIP
+const FREE_GAMES = Number(process.env.FREE_GAMES ?? 5);
+const SHIELDS_PER_GAME = 2;                                 // больше щитов за одну партию поставить нельзя   // сколько партий в сутки (по МСК) можно ДОИГРАТЬ без VIP
 const ATMO_TYPING_MS = Number(process.env.ATMO_TYPING_MS ?? 1100); // сколько «печатает…» рассказчик перед ночной/утренней строкой
 const TEMPERATURE = 0.9;     // «живость» речи
 const MAX_TOKENS = 400;
@@ -67,13 +68,14 @@ const CUR = () => als.getStore();      // партия текущего async-к
 // Тип аккаунта для пульта: VIP до какого числа или сколько бесплатных партий уже сыграно сегодня
 function account(u) {
   const vip = auth.isVip(u);
-  return { vip, vipUntil: vip ? u.vip_until : null, played: gamelog.finishedToday(u.id), limit: vip ? null : FREE_GAMES };
+  return { vip, vipUntil: vip ? u.vip_until : null, played: gamelog.finishedToday(u.id), limit: vip ? null : FREE_GAMES, shields: auth.shieldInfo(u).total };
 }
 
 function makeSession(userId, humanName, humanAvatar, humanBio, vip) {
   // gid + seq — номер партии и события: при обрыве связи браузер говорит «у меня есть всё до N», и мы досылаем только новое
   return { userId, humanName, humanAvatar, humanBio, premium: !!vip, eyeUnlocked: false, G: null, clients: [], eventBuffer: [], pending: null, finishedAt: null,
-    gid: Date.now().toString(36) + Math.random().toString(36).slice(2, 6), seq: 0 };
+    gid: Date.now().toString(36) + Math.random().toString(36).slice(2, 6), seq: 0,
+    shield: { used: 0, armed: null } };                  // armed = "night:2" / "day:3" — на какую ночь/день стоит щит
 }
 
 // ── Глаз бога: что игроку можно видеть ──
@@ -226,6 +228,25 @@ function startWeb() {
     res.json({ user, account: user ? account(user) : null });
   });
 
+  // Поставить щит: ночью (до развязки) или днём (до начала голосования). Сгорает всегда — спас или нет.
+  app.post("/shield", (req, res) => {
+    const me = auth.userByToken(auth.tokenFromReq(req));
+    const S = me && sessions.get(me.id);
+    const g = S && S.G, hp = S && humanOf(S);
+    if (!g || S.finishedAt || S.aborted || !hp || !hp.alive) return res.status(400).json({ error: "Сейчас щит не поставить" });
+    if (g.phase !== "night" && g.phase !== "day") return res.status(400).json({ error: "Щит ставится ночью или днём до голосования" });
+    const key = `${g.phase}:${g.day}`;
+    if (S.shield.armed === key) return res.status(400).json({ error: "Щит уже стоит" });
+    if (S.shield.used >= SHIELDS_PER_GAME) return res.status(400).json({ error: `Не больше ${SHIELDS_PER_GAME} щитов за партию` });
+    const r = auth.useShield(me.id);
+    if (r.error) return res.status(400).json({ error: r.error });
+    S.shield.armed = key; S.shield.used++;
+    gamelog.shieldUsed(S.gameId);
+    als.run(S, () => { secretAct(`🛡 ${hp.name} ставит щит (${g.phase === "night" ? "на ночь" : "на голосование"})`);
+      broadcast({ type: "shield", phase: g.phase, used: S.shield.used, left: r.info.total }); });
+    res.json({ ok: true, left: r.info.total, used: S.shield.used });
+  });
+
   // VIP завершает партию досрочно (когда его герой уже выбыл): результат не засчитывается
   app.post("/quit", (req, res) => {
     const me = auth.userByToken(auth.tokenFromReq(req));
@@ -336,7 +357,8 @@ function startWeb() {
       S.setup = ps.setup;
       sessions.set(me.id, S);                        // первая вкладка — заводим партию
     }
-    res.write(`data: ${JSON.stringify({ type: "eye_state", open: eyeOpen(S), premium: !!S.premium, vipUntil: S.vipUntil || null })}\n\n`);   // можно ли глаз
+    res.write(`data: ${JSON.stringify({ type: "eye_state", open: eyeOpen(S), premium: !!S.premium, vipUntil: S.vipUntil || null,
+      shields: auth.shieldInfo(me).total, shieldUsed: S.shield.used, shieldMax: SHIELDS_PER_GAME })}\n\n`);   // можно ли глаз + щиты
     // Переподключение после обрыва (телефон заснул, сеть мигнула): браузер сам присылает номер последнего события.
     // Та же партия — досылаем только пропущенное (лента не пересобирается, набранный текст не стирается).
     // Иначе (первый заход, другая партия, перечитать после открытия глаза) — проигрываем всю партию.
@@ -476,7 +498,7 @@ function rules() {
     + (st.putana ? " ТИХАЯ НОЧЬ может быть работой не только доктора, но и путаны: если она держала мафиози или маньяка, их убийства не было." : "");
 }
 const RULES =
-`Идёт игра «Мафия». Роли: МАФИЯ (двое; ночью вместе убивают одного; днём лгут и притворяются мирными), МАНЬЯК (одиночка; каждую ночь убивает одного любого; сам за себя), КОМИССАР (ночью тайно проверяет одного и узнаёт его ТОЧНУЮ роль), ДОКТОР (ночью спасает одного от смерти), МИРНЫЙ (вычисляет врагов логикой). Днём все спорят и голосованием казнят одного. Деревня побеждает, когда мертвы вся мафия И маньяк. Мафия побеждает при численном паритете. Маньяк побеждает, когда остаётся последним. Ты играешь ТОЛЬКО за себя и знаешь только свою роль. НАСТРОЕНИЕ — тоже улика, но читай его по тому, КТО погиб. Погиб хороший (мирный, доктор, комиссар) — радость подозрительна, так радуются злодеи. Погиб злодей (мафия или маньяк) — деревня радуется, это естественно; подозрителен тот, кто скис, отмолчался или жалеет погибшего злодея. Если злодеи ночью перебили друг друга — для деревни это праздник. ДОВЕРИЕ: почти всегда верь тому, кто назвался КОМИССАРОМ — его проверка сильнейшая улика, отмахиваться от него глупо. И запомни: личный ШЁПОТ один-на-один шлют только комиссар и доктор, мафия в личку не пишет — значит шепнувший тебе наедине это союзник, а не ловушка. Единственная осторожность: если СРАЗУ ДВОЕ назвались комиссаром — один из них мафия-лжец, вот тогда думай, кому верить. СЧЁТ ЖЕРТВ (не путайся!): мафия, даже если их двое, делает ВМЕСТЕ лишь ОДНО убийство за ночь; маньяк — ещё одно, отдельно. Значит за ночь максимум ДВА трупа (один от мафии, один от маньяка), минус кого спас доктор. ОДИН труп за ночь — обычное дело (сработал кто-то один, или доктор спас второго) и НЕ значит, что мафия кончилась. НЕ суди о числе живой мафии по числу трупов — считай только по вскрытым ролям казнённых и убитых. ОДНОВРЕМЕННОСТЬ НОЧИ: все ночные действия (убийства мафии и маньяка, лечение доктора, проверка комиссара) происходят РАЗОМ, а не по очереди. Поэтому доктор, даже если его самого убивают этой же ночью, ВСЁ РАВНО успевает спасти свою цель — он действовал до того, как пал. Не делай вывод «доктор убит, значит не успел спасти» — успел.`;
+`ЩИТ: у живого игрока может оказаться защита — тогда ночное убийство или дневная казнь против него не срабатывают («выстрел был, а трупа нет», «казнь не состоялась»). Щит ничего не говорит о роли. Идёт игра «Мафия». Роли: МАФИЯ (двое; ночью вместе убивают одного; днём лгут и притворяются мирными), МАНЬЯК (одиночка; каждую ночь убивает одного любого; сам за себя), КОМИССАР (ночью тайно проверяет одного и узнаёт его ТОЧНУЮ роль), ДОКТОР (ночью спасает одного от смерти), МИРНЫЙ (вычисляет врагов логикой). Днём все спорят и голосованием казнят одного. Деревня побеждает, когда мертвы вся мафия И маньяк. Мафия побеждает при численном паритете. Маньяк побеждает, когда остаётся последним. Ты играешь ТОЛЬКО за себя и знаешь только свою роль. НАСТРОЕНИЕ — тоже улика, но читай его по тому, КТО погиб. Погиб хороший (мирный, доктор, комиссар) — радость подозрительна, так радуются злодеи. Погиб злодей (мафия или маньяк) — деревня радуется, это естественно; подозрителен тот, кто скис, отмолчался или жалеет погибшего злодея. Если злодеи ночью перебили друг друга — для деревни это праздник. ДОВЕРИЕ: почти всегда верь тому, кто назвался КОМИССАРОМ — его проверка сильнейшая улика, отмахиваться от него глупо. И запомни: личный ШЁПОТ один-на-один шлют только комиссар и доктор, мафия в личку не пишет — значит шепнувший тебе наедине это союзник, а не ловушка. Единственная осторожность: если СРАЗУ ДВОЕ назвались комиссаром — один из них мафия-лжец, вот тогда думай, кому верить. СЧЁТ ЖЕРТВ (не путайся!): мафия, даже если их двое, делает ВМЕСТЕ лишь ОДНО убийство за ночь; маньяк — ещё одно, отдельно. Значит за ночь максимум ДВА трупа (один от мафии, один от маньяка), минус кого спас доктор. ОДИН труп за ночь — обычное дело (сработал кто-то один, или доктор спас второго) и НЕ значит, что мафия кончилась. НЕ суди о числе живой мафии по числу трупов — считай только по вскрытым ролям казнённых и убитых. ОДНОВРЕМЕННОСТЬ НОЧИ: все ночные действия (убийства мафии и маньяка, лечение доктора, проверка комиссара) происходят РАЗОМ, а не по очереди. Поэтому доктор, даже если его самого убивают этой же ночью, ВСЁ РАВНО успевает спасти свою цель — он действовал до того, как пал. Не делай вывод «доктор убит, значит не успел спасти» — успел.`;
 
 const roleName = (r) => ({ mafia: "Мафия", maniac: "Маньяк", komissar: "Комиссар", doctor: "Доктор", civilian: "Мирный", putana: "Путана", bomzh: "Бомж" }[r]);
 const roleC = (r) => ({ mafia: 196, maniac: 129, komissar: 75, doctor: 43, civilian: 78, putana: 205, bomzh: 137 }[r]);
@@ -1007,8 +1029,11 @@ function visitText(p, busy) {
               : `🌹 ${p.name} мирно ${u ? "спал(а)" : f ? "спала" : "спал"} — визит впустую.`;
 }
 
+function setPhase(ph) { G.phase = ph; broadcast({ type: "phase", phase: ph, day: G.day }); }
+
 async function doNight() {
   narrator(`\n🌙 Ночь ${G.day}. Деревня засыпает.`);
+  setPhase("night");
   const alive = living();
   const mafia = alive.filter((p) => p.role === "mafia");
   const maniac = alive.find((p) => p.role === "maniac");
@@ -1194,7 +1219,14 @@ async function doNight() {
   if (maniac && kt) G.priv[maniac.name].kills.push(kt);
   if (doctor && ds) G.priv[doctor.name].saves.push(ds);
 
+  setPhase("dawn");                                    // развязка ночи — щит уже не поставить
   const killed = new Set(); if (mt) killed.add(mt); if (kt) killed.add(kt); if (ds) killed.delete(ds);
+  // щит игрока: в него стреляли этой ночью — выжил (утром всем: «выстрел был, а трупа нет», без имени)
+  const S = CUR(), hp = G.players.find((p) => p.human);
+  if (hp && S.shield.armed === `night:${G.day}` && killed.has(hp.name)) {
+    killed.delete(hp.name); G.shieldSaved = true; gamelog.shieldSaved(S.gameId);
+    secretAct(`🛡 щит спас ${hp.name} этой ночью`);
+  }
   G.lastDead = [...killed].map(byName);
   G.lastDead.forEach((p) => { p.alive = false; p.revealed = p.role; });
 }
@@ -1203,7 +1235,8 @@ async function announceDead() {
   await atmo("dawn");
   broadcast({ type: "day", day: G.day });
   narrator(`\n☀️ День ${G.day}.`);
-  if (!G.lastDead.length) result("Ночь прошла тихо — все живы.");
+  if (G.shieldSaved) { result("🛡 Выстрел был, а трупа нет: кто-то выжил под защитой."); G.shieldSaved = false; }
+  else if (!G.lastDead.length) result("Ночь прошла тихо — все живы.");
   else {
     G.lastDead.forEach((d) => { result(`Ночная жертва: ${d.name} — ${roleName(d.revealed)}.`, d.revealed === "mafia" || d.revealed === "maniac"); broadcast({ type: "dead", name: d.name, role: d.revealed }); });
     G.lastOut = G.lastDead.map((d) => ({ name: d.name, role: d.revealed, how: "night" }));   // все погибшие за ночь
@@ -1212,6 +1245,7 @@ async function announceDead() {
 }
 
 async function doDiscussion() {
+  setPhase("day");                                     // обсуждение — щит можно поставить до начала голосования
   for (let round = 1; round <= 2; round++) {
     narrator(`— круг обсуждения ${round}/2 —`);
     for (const p of shuffle(living())) {
@@ -1232,6 +1266,7 @@ async function doDiscussion() {
 
 async function doVote() {
   narrator("\n🗳  Голосование.");
+  setPhase("vote");
   const alive = living();
   const tally = {};
   for (const p of alive) {
@@ -1251,6 +1286,13 @@ async function doVote() {
   }
   const max = Math.max(...Object.values(tally));
   const lynched = byName(shuffle(Object.keys(tally).filter((n) => tally[n] === max))[0]);
+  const S = CUR();
+  if (lynched.human && S.shield.armed === `day:${G.day}`) {   // щит игрока на голосовании — казнь срывается
+    gamelog.shieldSaved(S.gameId);
+    result(`🛡 Казнь не состоялась: у ${lynched.name} была защита (${max} гол.).`);
+    G.lastOut = [];
+    return;
+  }
   lynched.alive = false; lynched.revealed = lynched.role;
   result(`Казнён ${lynched.name} (${max} гол.). ${lynched.name} — ${roleName(lynched.revealed)}.`, lynched.revealed === "mafia" || lynched.revealed === "maniac");
   G.lastOut = [{ name: lynched.name, role: lynched.revealed, how: "lynch" }];

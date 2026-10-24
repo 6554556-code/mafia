@@ -94,6 +94,8 @@ function summary({ users, games, dUsers, dGames, dMsgs }) {
     const vipGames = dGames.filter((g) => g.vip === 1).length;
     L.push("", "👑 VIP и лимит");
     L.push(`Упёрлись в лимит ${FREE} партий: ${hit.size} игрок(ов) · VIP действует: ${vipNow} · VIP-партий за сутки: ${vipGames}`);
+    const shUsed = dGames.reduce((a, g) => a + (g.shields || 0), 0), shSaved = dGames.reduce((a, g) => a + (g.shield_saves || 0), 0);
+    L.push(`🛡 Щитов поставлено: ${shUsed} · реально спасли: ${shSaved} · игроков со щитом: ${new Set(dGames.filter((g) => g.shields).map((g) => g.user_id)).size}`);
   }
 
   if (fin.length) {

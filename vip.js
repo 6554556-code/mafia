@@ -3,6 +3,7 @@
 //   node vip.js add почта 30     — VIP на 30 дней (если уже есть — продлит от его конца)
 //   node vip.js off почта        — снять VIP
 //   node vip.js list             — у кого VIP и до когда
+//   node vip.js shield почта 5   — добавить 5 щитов (купленных; плюс к ним каждый день 1 подарочный)
 //
 // Кавычки не нужны. Игру перезапускать не надо: VIP подхватится со следующей партии
 // (лимит и аватарки — сразу, глаз бога без замка — со следующей партии).
@@ -21,6 +22,9 @@ if (cmd === "add" && email && days) {
 } else if (cmd === "off" && email) {
   r = auth.vipOff(email);
   if (!r.error) console.log(`Готово ✓ VIP снят: ${r.user.name} · ${r.user.email}`);
+} else if (cmd === "shield" && email && days) {
+  r = auth.shieldAdd(email, days);
+  if (!r.error) console.log(`Готово ✓ ${r.user.name} · ${r.user.email} · щитов: ${r.info.bought} купленных${r.info.gift ? " + 1 подарочный сегодня" : ""}`);
 } else if (cmd === "list") {
   const all = auth.vipList();
   const act = all.filter(auth.isVip);
@@ -28,7 +32,7 @@ if (cmd === "add" && email && days) {
   all.forEach((u) => console.log(line(u)));
   r = {};
 } else {
-  console.log("Как пользоваться:\n  node vip.js add почта 30\n  node vip.js off почта\n  node vip.js list");
+  console.log("Как пользоваться:\n  node vip.js add почта 30\n  node vip.js off почта\n  node vip.js list\n  node vip.js shield почта 5");
   r = {};
 }
 if (r.error) { console.log("Ошибка: " + r.error); process.exitCode = 1; }
