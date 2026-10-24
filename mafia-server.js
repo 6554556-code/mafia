@@ -71,7 +71,9 @@ function account(u) {
 }
 
 function makeSession(userId, humanName, humanAvatar, humanBio, vip) {
-  return { userId, humanName, humanAvatar, humanBio, premium: !!vip, eyeUnlocked: false, G: null, clients: [], eventBuffer: [], pending: null, finishedAt: null };
+  // gid + seq — номер партии и события: при обрыве связи браузер говорит «у меня есть всё до N», и мы досылаем только новое
+  return { userId, humanName, humanAvatar, humanBio, premium: !!vip, eyeUnlocked: false, G: null, clients: [], eventBuffer: [], pending: null, finishedAt: null,
+    gid: Date.now().toString(36) + Math.random().toString(36).slice(2, 6), seq: 0 };
 }
 
 // ── Глаз бога: что игроку можно видеть ──
@@ -91,12 +93,13 @@ function viewFor(S, ev) {
   }) };
   return ev;
 }
-function sendTo(S, res, ev) { const v = viewFor(S, ev); if (v) res.write(`data: ${JSON.stringify(v)}\n\n`); }
+function sendTo(S, res, ev) { const v = viewFor(S, ev); if (v) res.write(`id: ${S.gid}.${ev.seq}\ndata: ${JSON.stringify(v)}\n\n`); }
 
 // послать событие вкладкам ТЕКУЩЕЙ партии (и запомнить в её буфер)
 function broadcast(ev) {
   const S = CUR();
   if (!S || S.aborted) return;
+  ev.seq = ++S.seq;
   S.eventBuffer.push(ev);
   S.clients.forEach((res) => sendTo(S, res, ev));
   // игрок выбыл из игры или партия окончена — открываем глаз; вкладка перечитает партию уже со всеми секретами
@@ -112,7 +115,9 @@ function broadcast(ev) {
 function liveOnly(ev) {
   const S = CUR();
   if (!S) return;
-  S.clients.forEach((res) => sendTo(S, res, ev));
+  // без «id:» — иначе браузер запомнит это событие как последнее, а в буфере его нет
+  const line = `data: ${JSON.stringify(ev)}\n\n`;
+  S.clients.forEach((res) => { if (viewFor(S, ev)) res.write(line); });
 }
 
 function abortError() { const e = new Error("партия брошена"); e.aborted = true; return e; }
@@ -332,7 +337,14 @@ function startWeb() {
       sessions.set(me.id, S);                        // первая вкладка — заводим партию
     }
     res.write(`data: ${JSON.stringify({ type: "eye_state", open: eyeOpen(S), premium: !!S.premium, vipUntil: S.vipUntil || null })}\n\n`);   // можно ли глаз
-    S.eventBuffer.forEach((ev) => sendTo(S, res, ev)); // проигрываем уже случившееся (секреты — только если глаз открыт)
+    // Переподключение после обрыва (телефон заснул, сеть мигнула): браузер сам присылает номер последнего события.
+    // Та же партия — досылаем только пропущенное (лента не пересобирается, набранный текст не стирается).
+    // Иначе (первый заход, другая партия, перечитать после открытия глаза) — проигрываем всю партию.
+    const [lgid, lseq] = String(req.headers["last-event-id"] || "").split(".");
+    const resume = !fresh && lgid === S.gid && Number(lseq) > 0 && Number(lseq) <= S.seq;
+    if (resume) console.log(DIM(`🔌 игрок #${me.id} переподключился — пропустил событий: ${S.seq - Number(lseq)}, досылаем`));
+    else if (!fresh) console.log(DIM(`🔌 игрок #${me.id} перечитывает партию целиком (${S.seq} событий)`));
+    S.eventBuffer.forEach((ev) => { if (!resume || ev.seq > Number(lseq)) sendTo(S, res, ev); });   // секреты — только если глаз открыт
     S.clients.push(res);
     S.emptySince = null;                              // кто-то смотрит партию
     req.on("close", () => {
@@ -1341,6 +1353,8 @@ startWeb();
 // Брошенные: партия не доиграна, а все вкладки закрыты дольше ABANDON_MIN минут — останавливаем и выметаем.
 // Иначе с рекламы партии копились бы в памяти, а ИИ доигрывали бы для пустого зала за твои деньги.
 const ABANDON_MIN = Number(process.env.ABANDON_MIN ?? 15);
+setInterval(() => { for (const S of sessions.values()) S.clients.forEach((res) => { try { res.write(": ping\n\n"); } catch (_) {} }); }, 20000);
+
 function sweep() {
   const now = Date.now();
   for (const [uid, ps] of pendingStart) if (now - ps.at > PENDING_MS) pendingStart.delete(uid);   // выбор, по которому так и не зашли
