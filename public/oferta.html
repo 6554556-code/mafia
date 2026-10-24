@@ -49,7 +49,12 @@
   /* крестик как в остальных окнах: прилипает к правому верхнему углу при прокрутке */
   .close{position:sticky;top:6px;float:right;margin:-14px -12px 0 8px;z-index:2;font-size:22px;line-height:1;color:var(--ink-soft);text-decoration:none;padding:6px 9px;background:var(--paper);border-radius:4px}
   .close:hover{color:var(--ink)}
+  /* открыто внутри игры (в ларьке): без крестика и навигации */
+  .embed body{padding:0}
+  .embed .doc{border:0;box-shadow:none}
+  .embed .close,.embed .crumbs{display:none}
 </style>
+<script>if(location.search.indexOf("embed")>-1)document.documentElement.classList.add("embed")</script>
 </head>
 <body>
 <article class="doc">

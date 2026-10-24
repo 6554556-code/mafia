@@ -245,7 +245,8 @@
   .limitbox p{margin:0 0 8px}
   .limitbox .vipsell{color:#7a5c12}
   .limitbox .buyvip{display:block;width:100%;margin-top:6px;padding:11px;font-weight:700;font-size:15px;
-    background:var(--paper-2);color:var(--ink-soft);border:2px dashed var(--ink-soft);cursor:not-allowed}
+    background:var(--mafia-tx);color:#fff;border:2px solid var(--line);cursor:pointer;box-shadow:3px 3px 0 rgba(44,44,40,.2)}
+  .limitbox .buyvip:active{transform:translate(1px,1px)}
   /* плашка «к тебе пришла гостья» */
   .held{background:#fde7ef;border-color:#d97a9b}
   .held .who{color:#a0335c}
@@ -300,7 +301,31 @@
   .st-vip.locked input[type=range]{cursor:not-allowed}
   .st-vipline{margin-top:10px;font-size:12px;line-height:1.5;color:#7a5c12;text-align:center}
   .st-buy{display:inline-block;margin-left:6px;font-family:inherit;font-size:11px;font-weight:700;padding:2px 8px;
-    background:var(--paper-2);color:var(--ink-soft);border:1px dashed var(--ink-soft);cursor:not-allowed}
+    background:var(--mafia-tx);color:#fff;border:1px solid var(--line);cursor:pointer}
+  .buy-link{color:var(--mafia-tx);font-weight:700;text-decoration:underline;cursor:pointer}
+  /* 🛒 Ларёк */
+  .shop-card{max-width:380px}
+  .shop-sec{margin:4px 0 14px}
+  .shop-sec h4{margin:0 0 4px;font-size:15px}
+  .shop-sec .sub{font-size:12px;color:var(--ink-soft);line-height:1.45;margin:0 0 8px}
+  .shop-tiles{display:grid;grid-template-columns:repeat(3,1fr);gap:7px}
+  .shop-tile{font-family:inherit;color:var(--ink);background:#fbfaf5;border:2px solid var(--line);padding:9px 4px 8px;cursor:pointer;text-align:center;
+    box-shadow:3px 3px 0 rgba(44,44,40,.18);display:flex;flex-direction:column;gap:3px;align-items:center}
+  .shop-tile:hover{background:#fff6dc}
+  .shop-tile:active{transform:translate(1px,1px)}
+  .shop-tile:disabled{opacity:.55;cursor:wait}
+  .shop-tile b{font-size:14px}
+  .shop-tile .pr{font-size:15px;font-weight:700;color:var(--mafia-tx)}
+  .shop-tile .cap{font-size:10.5px;line-height:1.3;color:var(--ink-soft)}
+  .shop-sec.vip .shop-tile{border-color:#b8902f;box-shadow:inset 0 0 0 2px #f5e2b0,3px 3px 0 rgba(44,44,40,.18)}
+  .shop-foot{font-size:11.5px;line-height:1.5;color:var(--ink-soft);text-align:center;border-top:2px dashed var(--paper-2);padding-top:10px}
+  .shop-msg{display:none;margin:0 0 10px;padding:8px 10px;font-size:13px;background:var(--mafia-bg);border:2px solid var(--mafia-br);color:var(--mafia-tx)}
+  .shop-msg.on{display:block}
+  .shop-doc{display:none}
+  .shop-doc.on{display:block}
+  .shop-doc iframe{width:100%;height:min(62vh,560px);border:2px solid var(--line);background:var(--paper)}
+  .shop-back{font-family:inherit;font-size:13px;font-weight:700;margin:0 0 8px;padding:5px 10px;cursor:pointer;background:var(--paper-2);border:2px solid var(--line)}
+  .toast.tap{pointer-events:auto;cursor:pointer}
   .st-note{font-size:12px;color:#7a5c12;text-align:center;margin-top:6px;line-height:1.45}
   .ava-lock{font-size:12px;color:#7a5c12;margin:2px 0 6px}
   .ava-grid.locked .ava-opt{opacity:.45;cursor:not-allowed;filter:grayscale(.6)}
@@ -513,8 +538,9 @@ function toggleEye(){
   document.body.classList.toggle('blind',!on);
 }
 let toastTimer=null;
-function toast(html,ms=4500){
+function toast(html,ms=4500,onTap){
   const t=document.getElementById('toast'); t.innerHTML=html; t.classList.add('on');
+  t.classList.toggle('tap',!!onTap); t.onclick=onTap?()=>{ t.classList.remove('on','tap'); onTap(); }:null;
   clearTimeout(toastTimer); toastTimer=setTimeout(()=>t.classList.remove('on'),ms);
 }
 const youRoleEl=document.getElementById('youRole');
@@ -548,7 +574,7 @@ function updateQuit(){
 let shLeft=0, shUsed=0, shMax=2, phase=null, phaseDay=0, shArmed=null;
 function setShields(n){ shLeft=n; document.getElementById('shCount').textContent=n; document.getElementById('shBadge').classList.toggle('zero',!n); updateShield(); }
 function shieldInfo(){
-  toast(`🛡 <b>Щит</b> спасает от смерти: ставь ночью или днём до голосования. Сгорает в любом случае — сработал он или нет. Не больше ${shMax} за партию.<br>У тебя: <b>${shLeft}</b>. Каждый день — 1 щит в подарок. Купить — скоро.`,8000);
+  toast(`🛡 <b>Щит</b> спасает от смерти: ставь ночью или днём до голосования. Сгорает в любом случае — сработал он или нет. Не больше ${shMax} за партию.<br>У тебя: <b>${shLeft}</b>. Каждый день — 1 щит в подарок.<br><span class="buy-link">🛒 Купить щиты в ларьке</span>`,8000,()=>openShop());
 }
 function updateShield(){
   const me=players.find(p=>p.name===myName);
@@ -803,7 +829,7 @@ function limitBox(a){
   const d=document.createElement('div'); d.className='limitbox ev'; d.id='limitBox';
   d.innerHTML=`<p>🌙 Бесплатные партии на сегодня закончились. ${a.limit} новых каждый день — после полуночи по Москве.</p>`+
     `<p class="vipsell">👑 С VIP — без лимита, глаз бога с первой минуты, выбор роли, размера стола и аватарки.</p>`+
-    `<button class="buyvip pixel" disabled>👑 Купить VIP (скоро)</button>`;
+    `<button class="buyvip pixel" onclick="openShop()">👑 Купить VIP</button>`;
   return d;
 }
 // ── Экран перед партией: бесплатно — классическая восьмёрка; VIP — ползунок размера стола и выбор роли ──
@@ -832,7 +858,7 @@ async function showSetup(){
     // бесплатному — ничего выбирать не надо: одна кнопка, а ниже мелко витрина VIP (текст — Иры)
     box.innerHTML=`<button class="replay pixel" id="stPlay">▶ Играть</button>
       <div class="st-vipline">👑 VIP: от 8 до 16 игроков, бомж, путана, смертник в команде
-        <button class="st-buy" disabled>Купить (скоро)</button></div>`;
+        <button class="st-buy" onclick="openShop()">Купить</button></div>`;
     add(box);
     const p1=box.querySelector('#stPlay');
     p1.onclick=async()=>{ p1.disabled=true; p1.textContent='Раздаём роли…';
@@ -881,7 +907,8 @@ function acctLine(a){
   const d=document.createElement('div'); d.className='acct-line ev';
   if(a.vip){
     const left=a.vipUntil?(a.vipUntil-Date.now())/864e5:99;
-    d.textContent=!a.vipUntil?'👑 VIP':left<=3?`👑 VIP заканчивается ${ruDate(a.vipUntil)} · продлить (скоро)`:`👑 VIP до ${ruDate(a.vipUntil)}`;
+    if(a.vipUntil&&left<=3) d.innerHTML=`👑 VIP заканчивается ${ruDate(a.vipUntil)} · <span class="buy-link" onclick="openShop()">продлить</span>`;
+    else d.textContent=!a.vipUntil?'👑 VIP':`👑 VIP до ${ruDate(a.vipUntil)}`;
   } else d.textContent=`Сегодня сыграно ${Math.min(a.played,a.limit)} из ${a.limit} бесплатных партий`;
   return d;
 }
@@ -1036,9 +1063,10 @@ function openSettings(){
     document.getElementById('bioJob').value=u.bio_job??'';
     document.getElementById('bioHobby').value=u.bio_hobby??'';
     const a=d.account||{};
-    document.getElementById('acctInfo').textContent = a.vip
+    document.getElementById('acctInfo').innerHTML = (a.vip
       ? '👑 VIP до '+ruDate(a.vipUntil)
-      : `Бесплатный аккаунт · сегодня сыграно ${Math.min(a.played||0,a.limit||5)} из ${a.limit||5} партий · 👑 VIP — скоро`;
+      : `Бесплатный аккаунт · сегодня сыграно ${Math.min(a.played||0,a.limit||5)} из ${a.limit||5} партий`)
+      + ` · <span class="buy-link" onclick="closeSettings();openShop()">🛒 Ларёк</span>`;
     loadAvatars(u.avatar, !!a.vip); } }).catch(()=>{});
   document.getElementById('nickInput').focus();
 }
@@ -1048,7 +1076,7 @@ async function loadAvatars(current, vip){
   let data;
   try{ data=await (await fetch('/avatars')).json(); }catch(_){ grid.innerHTML='<div class="ava-group-title">не удалось загрузить</div>'; return; }
   grid.innerHTML='';
-  if(!vip){ const n=document.createElement('div'); n.className='ava-lock'; n.textContent='🔒 Выбор лица — в VIP 👑 (скоро)'; grid.appendChild(n); }
+  if(!vip){ const n=document.createElement('div'); n.className='ava-lock'; n.innerHTML='🔒 Выбор лица — в VIP 👑 · <span class="buy-link" onclick="closeSettings();openShop()">купить</span>'; grid.appendChild(n); }
   for(const [title,list] of [['Мужские',data.male||[]],['Женские',data.female||[]]]){
     if(!list.length) continue;
     const t=document.createElement('div'); t.className='ava-group-title'; t.textContent=title; grid.appendChild(t);
@@ -1075,6 +1103,52 @@ async function chooseAvatar(file,btn){
   }catch(e){ msg.className='setmsg err'; msg.textContent='Сервер не отвечает'; }
 }
 function closeSettings(){ document.getElementById('settings').style.display='none'; }
+
+// ── 🛒 Ларёк: выбор товара → страница оплаты ЮKassa → возврат в игру с ?paid=1 ──
+function shopMsg(t){ const m=document.getElementById('shopMsg'); m.textContent=t||''; m.classList.toggle('on',!!t); }
+function openShop(){ shopMsg(''); shopDoc(false); document.getElementById('shopModal').style.display='flex'; }
+function closeShop(){ document.getElementById('shopModal').style.display='none'; }
+function shopDoc(on){
+  const f=document.getElementById('shopDocFrame');
+  if(on && !f.src) f.src='oferta.html?embed=1';
+  document.getElementById('shopDoc').classList.toggle('on',on);
+  document.getElementById('shopMain').style.display=on?'none':'';
+}
+// окно ларька в разметке ниже скрипта — поэтому ловим нажатия на плитки через документ
+document.addEventListener('click',async e=>{
+  const b=e.target.closest&&e.target.closest('#shopModal .shop-tile'); if(!b||b.disabled) return;
+  const tiles=document.querySelectorAll('#shopModal .shop-tile');
+  tiles.forEach(x=>x.disabled=true); shopMsg('');
+  try{
+    const r=await fetch('/pay/create',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({product:b.dataset.p})});
+    const d=await r.json().catch(()=>({}));
+    if(d.url){ location.href=d.url; return; }      // уходим на страницу оплаты
+    shopMsg(d.error||'Не получилось начать оплату, попробуй ещё раз');
+  }catch(_){ shopMsg('Нет связи с сервером, попробуй ещё раз'); }
+  tiles.forEach(x=>x.disabled=false);
+});
+// вернулись со страницы оплаты: узнаём, чем кончилось (ЮKassa иногда подтверждает не мгновенно — спрашиваем несколько раз)
+async function checkPaid(n=0){
+  let d=null; try{ d=await (await fetch('/pay/last')).json(); }catch(_){}
+  const p=d&&d.payment, a=d&&d.account;
+  if(a){ setVipBadge(a.vip?(a.vipUntil||1):null); if(typeof a.shields==='number') setShields(a.shields); }
+  if(p&&p.credited){
+    if(/^vip/.test(p.product)){
+      const onSetup=!!document.getElementById('setupBox');
+      if(onSetup) showSetup();                         // сразу перерисовать экран: ползунок стола и выбор роли
+      toast(`👑 VIP до ${ruDate(a.vipUntil)} — азартной охоты!<br><small>${onSetup?'Выбирай размер стола и роль — и за стол.':'Размер стола и роль — на экране перед следующей партией.'}</small>`,9000);
+    }
+    else toast(`🛡 +${p.product.slice(2)} ${+p.product.slice(2)===1?'щит':'щитов'}, теперь у тебя ${a.shields}`,7000);
+    return;
+  }
+  if(p&&p.status==='canceled'){ toast('Оплата не прошла — деньги не списаны. Можно попробовать ещё раз в 🛒 Ларьке.',8000,()=>openShop()); return; }
+  if(p&&p.status==='pending'&&n<6){ if(!n) toast('⏳ Проверяем оплату…',4000); setTimeout(()=>checkPaid(n+1),3000); return; }
+  if(p) toast('⏳ Оплата ещё обрабатывается. Как только ЮKassa подтвердит — VIP или щиты придут сами. Если не пришли за час — напиши нам: ebookee.app@gmail.com',12000);
+}
+if(new URLSearchParams(location.search).has('paid')){
+  history.replaceState(null,'',location.pathname);   // чтобы обновление страницы не проверяло заново
+  setTimeout(()=>checkPaid(),600);
+}
 async function saveNick(){
   const msg=document.getElementById('setMsg');
   const name=document.getElementById('nickInput').value.trim();
@@ -1201,6 +1275,37 @@ connect();
     <div class="lb-row head"><span class="r">#</span><span></span><span>Игрок</span><span class="p" style="color:inherit">Очки</span><span class="g">Игр</span><span class="w">Побед</span></div>
     <div class="lb-list" id="lbList"></div>
     <div class="lb-rules">2 очка — твоя сторона победила и ты дожил · 1 очко — победила, но тебя уже нет.<br>Маньяк и мафия — одна команда «плохих». Неделя обнуляется в понедельник.</div>
+  </div>
+</div>
+<div class="modal pixel" id="shopModal" style="display:none" onclick="if(event.target===this)closeShop()">
+  <div class="modal-card shop-card">
+    <div class="modal-head"><span>🛒 Ларёк</span><span class="x" onclick="closeShop()">✕</span></div>
+    <div class="shop-msg" id="shopMsg"></div>
+    <div id="shopMain">
+      <div class="shop-sec vip">
+        <h4>👑 VIP</h4>
+        <p class="sub">Стол до 12 игроков, выбор роли, путана и бомж, глаз бога с первой минуты, партии без лимита.</p>
+        <div class="shop-tiles">
+          <button class="shop-tile" data-p="vip1"><b>Сутки</b><span class="pr">59 ₽</span><span class="cap">попробовать</span></button>
+          <button class="shop-tile" data-p="vip7"><b>Неделя</b><span class="pr">199 ₽</span><span class="cap">наиграться от души</span></button>
+          <button class="shop-tile" data-p="vip30"><b>Месяц</b><span class="pr">499 ₽</span><span class="cap">для тех, кто не сдаётся</span></button>
+        </div>
+      </div>
+      <div class="shop-sec">
+        <h4>🛡 Щиты</h4>
+        <p class="sub">Спасает героя от ночного выстрела или казни. Не больше 2 за партию, купленные не сгорают.</p>
+        <div class="shop-tiles">
+          <button class="shop-tile" data-p="sh1"><b>1</b><span class="pr">25 ₽</span><span class="cap">спастись прямо сейчас</span></button>
+          <button class="shop-tile" data-p="sh10"><b>10</b><span class="pr">199 ₽</span><span class="cap">на чёрную ночь</span></button>
+          <button class="shop-tile" data-p="sh30"><b>30</b><span class="pr">499 ₽</span><span class="cap">для самых осторожных</span></button>
+        </div>
+      </div>
+      <div class="shop-foot">Оплата картой или через СБП на странице ЮKassa · без автопродления<br><span class="buy-link" onclick="shopDoc(true)">Условия покупки и возврата</span></div>
+    </div>
+    <div class="shop-doc" id="shopDoc">
+      <button class="shop-back" onclick="shopDoc(false)">← Назад в ларёк</button>
+      <iframe id="shopDocFrame" title="Публичная оферта" loading="lazy"></iframe>
+    </div>
   </div>
 </div>
 <div class="modal pixel" id="settings" style="display:none" onclick="if(event.target===this)closeSettings()">
