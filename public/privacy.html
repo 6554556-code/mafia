@@ -46,12 +46,14 @@
   ol,ul{margin:0 0 8px;padding-left:22px}
   .req{background:var(--paper-2);border:2px dashed var(--ink-soft);padding:12px 14px;font-size:15px;line-height:1.6}
   .todo{background:#ffe36e;color:#000;padding:0 3px}
-  footer{max-width:760px;margin:14px auto 0;text-align:center;font-size:13px}
-  footer a{color:#e9c46a;margin:0 8px}
+  /* крестик как в остальных окнах: прилипает к правому верхнему углу при прокрутке */
+  .close{position:sticky;top:6px;float:right;margin:-14px -12px 0 8px;z-index:2;font-size:22px;line-height:1;color:var(--ink-soft);text-decoration:none;padding:6px 9px;background:var(--paper);border-radius:4px}
+  .close:hover{color:var(--ink)}
 </style>
 </head>
 <body>
 <article class="doc">
+  <a class="close" href="info.html#docs" aria-label="Закрыть" title="Закрыть">✕</a>
   <nav class="crumbs" aria-label="Навигация"><a href="/">Мафия с ИИ</a> › <a href="info.html">Информация</a> › Конфиденциальность</nav>
   <h1>Политика в отношении обработки персональных данных</h1>
   <p class="ed">Редакция от 24 октября 2026 года</p>
@@ -125,6 +127,5 @@
     Телефон: <a href="tel:+79150888833">+7 915 088-88-33</a>
   </div>
 </article>
-<footer><a href="info.html">Информация</a><a href="info.html#prices">Цены</a><a href="oferta.html">Оферта</a><a href="/">Играть</a></footer>
 </body>
 </html>
