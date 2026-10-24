@@ -1292,7 +1292,9 @@ async function gameLoop() {
       humanP.sex = /^female\//.test(ha) ? "f" : /^male\//.test(ha) ? "m" : null;
       // своя биография вместо унаследованной от персонажа: только то, что игрок написал сам (пустое = нет)
       const bio = CUR().humanBio || {};
-      humanP.age = bio.age >= 18 ? bio.age : null;   // игра 18+: младший возраст из старых анкет за стол не несём humanP.job = bio.job || null; humanP.hobby = bio.hobby || null;
+      humanP.age = bio.age >= 18 ? bio.age : null;   // игра 18+: младший возраст из старых анкет за стол не несём
+      humanP.job = bio.job || null;
+      humanP.hobby = bio.hobby || null;
       humanP.persona = null; humanP.style = null; humanP.think = null;   // характер персонажа человеку не нужен
     }
   }
