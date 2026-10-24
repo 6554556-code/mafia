@@ -56,6 +56,7 @@ const BOLD = (s) => `\x1b[1m${s}\x1b[0m`;
 const express = require("express");
 const auth = require("./auth");
 const gamelog = require("./gamelog");   // журнал партий и слов игрока (для статистики теста)
+const payments = require("./payments"); // оплата VIP и щитов через ЮKassa
 const PORT = process.env.PORT || 3000;
 // ── Многосессийность: у каждого игрока своя партия ──────────────────────
 const { AsyncLocalStorage } = require("node:async_hooks");
@@ -188,6 +189,40 @@ function startWeb() {
     auth.logout(auth.tokenFromReq(req));
     res.clearCookie("sid", { path: "/" });
     res.json({ ok: true });
+  });
+
+  // ── Оплата (ЮKassa) — вся логика в payments.js ──
+  const accountOf = (u) => ({ vip: auth.isVip(u), vipUntil: u.vip_until || null, shields: auth.shieldInfo(u).total });
+  const payView = (row) => row && { id: row.id, product: row.product, title: (payments.CATALOG[row.product] || {}).title, status: row.status, credited: !!row.credited };
+  app.get("/pay/catalog", (req, res) => res.json({ enabled: payments.enabled(), items: payments.catalog() }));
+  app.post("/pay/create", async (req, res) => {
+    const u = auth.userByToken(auth.tokenFromReq(req));
+    if (!u) return res.status(401).json({ error: "Войди в игру, чтобы купить" });
+    const k = "pay:" + u.id;
+    if (recent(k, 600e3).length >= 10) return res.status(429).json({ error: "Слишком много попыток оплаты. Подожди 10 минут." });
+    hit(k);
+    const base = process.env.PUBLIC_URL || `${req.protocol}://${req.get("host")}`;
+    try {
+      const r = await payments.create(u, String((req.body || {}).product || ""), base + "/?paid=1");
+      if (r.error) return res.status(400).json({ error: r.error });
+      res.json({ url: r.url });
+    } catch (e) {
+      console.error("💳 создать платёж:", e.message);
+      res.status(502).json({ error: "Платёжный сервис не отвечает, попробуй через минуту" });
+    }
+  });
+  // после возврата со страницы оплаты: что с последним платежом (заодно перепроверяем у ЮKassa)
+  app.get("/pay/last", async (req, res) => {
+    const u = auth.userByToken(auth.tokenFromReq(req));
+    if (!u) return res.status(401).json({ error: "Не вошли" });
+    let row = payments.lastOf(u.id);
+    if (row && row.status === "pending") { try { row = await payments.sync(row.id); } catch (e) { console.error("💳 проверка:", e.message); } }
+    res.json({ payment: payView(row), account: accountOf(auth.userByToken(auth.tokenFromReq(req))) });
+  });
+  // уведомления от ЮKassa: отвечаем «принято» сразу, а сам платёж перепроверяем у неё по номеру
+  app.post("/pay/webhook", (req, res) => {
+    res.status(200).end();
+    payments.onWebhook(req.body).catch((e) => console.error("💳 уведомление:", e.message));
   });
   // Панель дежурного: живые цифры. Отвечает ТОЛЬКО запросу с самого сервера (node stats.js online);
   // всё, что пришло через Caddy (там всегда есть X-Forwarded-For) или снаружи, — «не найдено».
