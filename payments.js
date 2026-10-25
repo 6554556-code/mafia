@@ -68,6 +68,11 @@ function notifyPaid(row, item) {
 
 const API = process.env.YK_API || "https://api.yookassa.ru/v3";   // YK_API — только для проверки на стенде
 const enabled = () => !!(process.env.YK_SHOP_ID && process.env.YK_SECRET);
+// Тестовый магазин (ключ test_…): тестовые карты публичные, поэтому покупать могут ТОЛЬКО почты из YK_TEST_USERS
+// (через запятую). Остальным — «оплата скоро заработает». С боевым ключом (live_…) ограничения нет.
+const testMode = () => String(process.env.YK_SECRET || "").startsWith("test_");
+const testAllowed = (email) => String(process.env.YK_TEST_USERS || "").toLowerCase().split(",").map((x) => x.trim()).filter(Boolean)
+  .includes(String(email || "").toLowerCase());
 const authHeader = () => "Basic " + Buffer.from(`${process.env.YK_SHOP_ID}:${process.env.YK_SECRET}`).toString("base64");
 
 async function yk(method, url, body) {
@@ -86,7 +91,7 @@ async function yk(method, url, body) {
 async function create(user, product, returnUrl) {
   const item = CATALOG[product];
   if (!item) return { error: "Нет такого товара" };
-  if (!enabled()) return { error: "Оплата скоро заработает — загляни чуть позже" };
+  if (!enabled() || (testMode() && !testAllowed(user.email))) return { error: "Оплата скоро заработает — загляни чуть позже" };
   const body = {
     amount: { value: item.price, currency: "RUB" },
     capture: true,                                   // списываем сразу, без ручного подтверждения
@@ -145,6 +150,15 @@ async function sync(id) {
   // сверяем всё: статус, сумму, валюту, кому и что
   const legit = p.paid && p.amount && p.amount.value === item.price && p.amount.currency === "RUB"
     && meta.user_id === String(row.user_id) && meta.product === row.product;
+  // тестовый платёж зачисляем только тем, кому разрешено тестировать (вторая линия обороны)
+  if (p.test) {
+    const u = db.prepare("SELECT email FROM users WHERE id = ?").get(row.user_id);
+    if (!u || !testAllowed(u.email)) {
+      db.prepare("UPDATE payments SET status = 'canceled' WHERE id = ? AND credited = 0").run(row.id);
+      console.error(`💳 тестовый платёж ${row.id} от игрока #${row.user_id} — не в YK_TEST_USERS, не зачислено`);
+      return db.prepare("SELECT * FROM payments WHERE id = ?").get(row.id);
+    }
+  }
   if (p.status === "succeeded" && legit) {
     credit(row, Date.parse(p.captured_at || p.created_at) || Date.now());
   } else if (p.status === "succeeded") {
