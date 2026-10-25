@@ -251,7 +251,7 @@
   .limitbox .buyvip:active{transform:translate(1px,1px)}
   .vb-msg{font-size:12px;color:var(--ink-soft);margin-top:8px;min-height:1em}
   /* настройки: почта, пароль, новости */
-  .acc-section{margin-top:16px;padding-top:12px;border-top:1px dashed var(--ink-soft)}
+  .acc-section{margin-top:12px;padding-top:12px;border-top:1px dashed var(--ink-soft)}
   .acc-mail{font-size:13px;line-height:1.5;margin:2px 0 6px;word-break:break-all}
   .acc-mail .okm{color:var(--good);font-weight:700}
   .acc-mail .nom{color:var(--mafia-tx);font-weight:700}
@@ -1400,20 +1400,6 @@ connect();
     <input id="nickInput" maxlength="16" autocomplete="off">
     <button class="save" onclick="saveNick()">Сохранить ник</button>
     <div class="setmsg" id="setMsg"></div>
-    <div class="bio-section">
-      <label>О себе (по желанию — увидят все за столом)</label>
-      <div class="bio-row">
-        <input id="bioAge" class="bio-age" type="number" min="18" max="99" placeholder="Возраст" autocomplete="off">
-        <input id="bioJob" maxlength="40" placeholder="Кто по жизни" autocomplete="off">
-      </div>
-      <input id="bioHobby" maxlength="40" placeholder="Увлечения" autocomplete="off" style="margin-top:6px">
-      <button class="save" onclick="saveBio()">Сохранить «о себе»</button>
-      <div class="setmsg" id="bioMsg"></div>
-    </div>
-    <div class="ava-section">
-      <label>Выбери своё лицо 👇</label>
-      <div id="avaGrid"></div>
-    </div>
     <div class="acc-section">
       <label>Почта</label>
       <div class="acc-mail" id="accMail">…</div>
@@ -1427,6 +1413,20 @@ connect();
       <button class="save" onclick="changePass()">Сменить пароль</button>
       <div class="setmsg" id="pwMsg"></div>
       <label class="news-chk"><input type="checkbox" id="newsChk" onchange="saveNews(this.checked)"><span>Хочу получать новости, подарки, участвовать в розыгрышах и акциях</span></label>
+    </div>
+    <div class="bio-section">
+      <label>О себе (по желанию — увидят все за столом)</label>
+      <div class="bio-row">
+        <input id="bioAge" class="bio-age" type="number" min="18" max="99" placeholder="Возраст" autocomplete="off">
+        <input id="bioJob" maxlength="40" placeholder="Кто по жизни" autocomplete="off">
+      </div>
+      <input id="bioHobby" maxlength="40" placeholder="Увлечения" autocomplete="off" style="margin-top:6px">
+      <button class="save" onclick="saveBio()">Сохранить «о себе»</button>
+      <div class="setmsg" id="bioMsg"></div>
+    </div>
+    <div class="ava-section">
+      <label>Выбери своё лицо 👇</label>
+      <div id="avaGrid"></div>
     </div>
     <div class="soon" id="acctInfo">…</div>
   </div>

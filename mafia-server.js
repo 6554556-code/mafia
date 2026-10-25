@@ -191,6 +191,7 @@ function startWeb() {
     const r = auth.register(email, password, name, { pd: !!pd, news: !!news });
     if (r.error) return res.status(400).json({ error: r.error });
     hit(k);
+    sendVerifyMail(r.user, req, false);              // письмо «подтверди почту» — сразу, чтобы к концу первой партии оно уже ждало во входящих
     res.cookie("sid", r.token, { httpOnly: true, sameSite: "lax", path: "/", maxAge: 30 * 24 * 3600 * 1000 });
     res.json({ user: r.user });
   });
