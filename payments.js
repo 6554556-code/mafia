@@ -41,6 +41,31 @@ const CATALOG = {
   sh30:  { title: "30 щитов",      price: "499.00", shields: 30 },
 };
 
+// ── Сообщение в Telegram о каждой оплате — тот же бот и чат, что у утренней сводки (TG_BOT_TOKEN, TG_CHAT_ID в ~/.env).
+//    TG_PAY_CHAT_ID — если захочется слать оплаты в отдельный чат. Ошибка отправки игру и зачисление не трогает.
+const rub = (n) => Math.round(n).toLocaleString("ru-RU") + " ₽";
+function notify(text) {
+  const token = process.env.TG_BOT_TOKEN, chat = process.env.TG_PAY_CHAT_ID || process.env.TG_CHAT_ID;
+  if (!token || !chat) return;
+  fetch(`${process.env.TG_API || "https://api.telegram.org"}/bot${token}/sendMessage`, {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ chat_id: chat, text, disable_web_page_preview: true }),
+    signal: AbortSignal.timeout(15000),
+  }).then((r) => { if (!r.ok) console.error("💳 телеграм: ответ " + r.status); })
+    .catch((e) => console.error("💳 телеграм:", e.message));
+}
+function notifyPaid(row, item) {
+  const u = db.prepare("SELECT name, email, vip_until, shields FROM users WHERE id = ?").get(row.user_id) || {};
+  const dayStart = (() => { const d = new Date(Date.now() + 3 * 3600e3); d.setUTCHours(0, 0, 0, 0); return d.getTime() - 3 * 3600e3; })();   // полночь по Москве
+  const today = db.prepare("SELECT COUNT(*) n, COALESCE(SUM(CAST(amount AS REAL)), 0) s FROM payments WHERE credited = 1 AND test = ? AND paid_at >= ?").get(row.test ? 1 : 0, dayStart);
+  const now = item.vipMs
+    ? "👑 VIP до " + new Intl.DateTimeFormat("ru-RU", { timeZone: "Europe/Moscow", day: "numeric", month: "long", hour: "2-digit", minute: "2-digit" }).format(u.vip_until)
+    : "🛡 купленных щитов: " + u.shields;
+  notify(`${row.test ? "🧪 ТЕСТ · " : ""}💰 +${rub(Number(row.amount))} · ${item.title}\n`
+    + `Кто: ${u.name || "?"} (${u.email || "?"})\n${now}\n`
+    + `За сегодня${row.test ? " (тест)" : ""}: ${rub(today.s)} · оплат: ${today.n}`);
+}
+
 const API = process.env.YK_API || "https://api.yookassa.ru/v3";   // YK_API — только для проверки на стенде
 const enabled = () => !!(process.env.YK_SHOP_ID && process.env.YK_SECRET);
 const authHeader = () => "Basic " + Buffer.from(`${process.env.YK_SHOP_ID}:${process.env.YK_SECRET}`).toString("base64");
@@ -105,6 +130,7 @@ function credit(row, paidAt) {
     db.exec("COMMIT");
   } catch (e) { try { db.exec("ROLLBACK"); } catch (_) {} throw e; }
   console.log(`💳 оплата ${row.id}: ${item.title} за ${row.amount} ₽ → игрок #${row.user_id}${row.test ? " (тест)" : ""}`);
+  try { notifyPaid(row, item); } catch (e) { console.error("💳 телеграм:", e.message); }
   return true;
 }
 
@@ -123,6 +149,7 @@ async function sync(id) {
     credit(row, Date.parse(p.captured_at || p.created_at) || Date.now());
   } else if (p.status === "succeeded") {
     console.error(`💳 оплата ${row.id}: статус succeeded, но данные не сходятся — НЕ зачислено, проверь в кабинете ЮKassa`);
+    notify(`⚠️ Платёж ${row.id}: ЮKassa пишет «оплачен», но сумма или покупатель не сходятся — НЕ зачислено. Проверь в кабинете ЮKassa.`);
   } else if (p.status === "canceled") {
     db.prepare("UPDATE payments SET status = 'canceled' WHERE id = ? AND credited = 0").run(row.id);
   }
