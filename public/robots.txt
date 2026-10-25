@@ -4,4 +4,4 @@ Disallow: /index.html
 Disallow: /events
 Disallow: /avatars/
 
-Sitemap: https://mafia.friend-e.com/sitemap.xml
+Sitemap: https://iplaymafia.com/sitemap.xml

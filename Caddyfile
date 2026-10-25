@@ -1,7 +1,24 @@
-# «Привратник» Caddy: принимает игроков на mafia.friend-e.com по https,
-# сам получает и продлевает бесплатный сертификат Let's Encrypt
-# и передаёт всё игре на порт 3000 этого же сервера.
+# «Привратник» Caddy: принимает игроков по https, сам получает и продлевает
+# бесплатные сертификаты Let's Encrypt и передаёт всё игре на порт 3000 этого же сервера.
 # ВАЖНО: без «encode gzip» — сжатие копит прямой эфир игры (SSE) в буфере, и игра «зависает».
-mafia.friend-e.com {
+
+# Основной адрес игры
+iplaymafia.com {
 	reverse_proxy localhost:3000
+}
+
+# www → без www (один адрес для поисковиков)
+www.iplaymafia.com {
+	redir https://iplaymafia.com{uri} permanent
+}
+
+# Старый адрес: всё навсегда переадресуем на новый (рекламные ссылки и вес в поиске переезжают),
+# КРОМЕ уведомлений ЮKassa — их принимаем здесь же, пока в кабинете ЮKassa не сменили адрес.
+mafia.friend-e.com {
+	handle /pay/webhook {
+		reverse_proxy localhost:3000
+	}
+	handle {
+		redir https://iplaymafia.com{uri} permanent
+	}
 }
