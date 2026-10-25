@@ -111,6 +111,14 @@
     color:#fff;background:rgba(181,53,44,.92);border:2px solid #fff;border-radius:50%;
     width:2.9em;height:2.9em;display:grid;place-items:center;box-shadow:0 2px 8px rgba(0,0,0,.5);pointer-events:none}
   .agree{margin-top:10px;font-size:12px;line-height:1.45;color:var(--ink-soft);text-align:center}
+  .chk{display:flex;gap:9px;align-items:flex-start;margin:12px 0 0;font-size:12.5px;line-height:1.45;color:var(--ink);letter-spacing:0;cursor:pointer}
+  .chk input{flex:none;width:18px;height:18px;margin:1px 0 0;accent-color:var(--red);cursor:pointer}
+  .chk a{color:var(--red)}
+  .chk.need span{color:var(--red);font-weight:700}
+  .forgot-link{text-align:center;margin-top:12px;font-size:13px}
+  .forgot-link a{color:var(--red)}
+  .fp-text{font-size:13px;line-height:1.5;color:var(--ink-soft);margin:12px 0 0;text-align:center}
+  .msg.ok{display:block;background:#e3f1e6;border:2px solid #8cc39b;color:#2f6f43}
   .agree a{color:var(--red)}
 
   /* правила */
@@ -154,9 +162,29 @@
       <label for="password">Пароль</label>
       <input id="password" type="password" autocomplete="current-password" placeholder="минимум 6 символов">
 
+      <div id="regChecks" style="display:none">
+        <label class="chk"><input type="checkbox" id="pdOk"><span>Даю <a href="consent.html" onclick="return openDoc(this)">согласие на обработку персональных данных</a> и принимаю <a href="privacy.html" onclick="return openDoc(this)">политику конфиденциальности</a></span></label>
+        <label class="chk"><input type="checkbox" id="newsOk"><span>Хочу получать новости, подарки, участвовать в розыгрышах и акциях</span></label>
+      </div>
+
       <button class="btn" id="submit">ВОЙТИ</button>
-      <div class="agree" id="agree18" style="display:none">Психологическая игра 18+. Регистрируясь, ты подтверждаешь, что тебе есть 18 лет, и принимаешь <a href="oferta.html" onclick="return openDoc(this)">оферту</a> и <a href="privacy.html" onclick="return openDoc(this)">политику конфиденциальности</a>.</div>
+      <div class="forgot-link" id="forgotLink"><a href="#" onclick="forgotOpen();return false">Забыли пароль?</a></div>
+      <div class="agree" id="agree18" style="display:none">Психологическая игра 18+. Регистрируясь, ты подтверждаешь, что тебе есть 18 лет, и принимаешь <a href="oferta.html" onclick="return openDoc(this)">оферту</a>.</div>
       <div class="msg" id="msg"></div>
+    </div>
+  </div>
+
+  <!-- Забыли пароль? -->
+  <div class="sheet" id="sheet-forgot" onclick="if(event.target===this)closeSheets()">
+    <div class="card" role="dialog" aria-label="Забыли пароль">
+      <button class="close" onclick="closeSheets()" aria-label="Закрыть">✕</button>
+      <div class="brand pixel" style="font-size:24px">Забыли пароль?</div>
+      <p class="fp-text">Напиши почту, с которой регистрировался, — пришлём новый пароль. Запоминается с первого раза 😉</p>
+      <label for="fpEmail">Почта</label>
+      <input id="fpEmail" type="email" autocomplete="email" placeholder="you@mail.com">
+      <button class="btn" id="fpSend" onclick="forgotSend()">ПРИСЛАТЬ ПАРОЛЬ</button>
+      <div class="msg" id="fpMsg"></div>
+      <div class="forgot-link"><a href="#" onclick="openSheet('auth');setMode('login');return false">← Назад ко входу</a></div>
     </div>
   </div>
 
@@ -227,6 +255,8 @@
     $("tabReg").classList.toggle("on", m==="register");
     nameRow.style.display = m==="register" ? "block" : "none";
     $("agree18").style.display = m==="register" ? "block" : "none";
+    $("regChecks").style.display = m==="register" ? "block" : "none";
+    $("forgotLink").style.display = m==="login" ? "block" : "none";
     btn.textContent = m==="register" ? "СОЗДАТЬ И ИГРАТЬ" : "ВОЙТИ";
     $("password").setAttribute("autocomplete", m==="register" ? "new-password" : "current-password");
     hideMsg();
@@ -243,25 +273,51 @@
     const password = $("password").value;
     const name = $("name").value.trim();
     if(!email || !password || (mode==="register" && !name)){ showErr("Заполни все поля."); return; }
-    const body = mode==="register" ? { email, password, name } : { email, password };
+    const pd = $("pdOk").checked, news = $("newsOk").checked;
+    $("pdOk").closest(".chk").classList.toggle("need", mode==="register" && !pd);
+    if(mode==="register" && !pd){ showErr("Отметь согласие на обработку персональных данных — без него не можем завести аккаунт."); return; }
+    const body = mode==="register" ? { email, password, name, pd, news } : { email, password };
     btn.disabled = true;
     try{
       const res = await fetch("/"+mode, { method:"POST", headers:{ "Content-Type":"application/json" }, body: JSON.stringify(body) });
       const data = await res.json().catch(() => ({}));
       if(!res.ok || data.error){ showErr(data.error || "Что-то пошло не так, попробуй ещё раз."); btn.disabled = false; return; }
       markSeen();
-      location.href = "/"; // успех — за стол
+      location.href = data.fromTemp ? "/?newpass=1" : "/"; // успех — за стол
     }catch(e){
       showErr("Сервер не отвечает. Проверь соединение.");
       btn.disabled = false;
     }
   }
   btn.onclick = go;
+  $("pdOk").onchange = () => $("pdOk").closest(".chk").classList.remove("need");
+
+  // ── Забыли пароль? ──
+  function forgotOpen(){
+    openSheet("forgot");
+    $("fpEmail").value = $("email").value.trim();
+    $("fpMsg").className = "msg"; $("fpSend").disabled = false;
+    setTimeout(() => $("fpEmail").focus(), 50);
+  }
+  async function forgotSend(){
+    const m = $("fpMsg"), b = $("fpSend"), email = $("fpEmail").value.trim();
+    if(!email){ m.textContent = "Напиши почту."; m.className = "msg err"; return; }
+    b.disabled = true;
+    try{
+      const r = await fetch("/forgot", { method:"POST", headers:{ "Content-Type":"application/json" }, body: JSON.stringify({ email }) });
+      const d = await r.json().catch(() => ({}));
+      if(!r.ok){ m.textContent = d.error || "Не получилось, попробуй ещё раз."; m.className = "msg err"; b.disabled = false; return; }
+      m.innerHTML = "📬 Если такая почта у нас есть — новый пароль уже летит. Загляни и в «Спам». Пароль действует 24 часа, старый тоже продолжает работать.";
+      m.className = "msg ok";
+      $("email").value = email;
+    }catch(_){ m.textContent = "Сервер не отвечает. Проверь соединение."; m.className = "msg err"; b.disabled = false; }
+  }
   // прямая ссылка на правила: /auth.html#rules (из раздела «Документы»)
   if (location.hash === "#rules") openSheet("rules");
   document.addEventListener("keydown", (e) => {
     if(e.key === "Escape"){ if($("sheet-doc").classList.contains("on")) closeDoc(); else closeSheets(); }
     if(e.key === "Enter" && $("sheet-auth").classList.contains("on")) go();
+    if(e.key === "Enter" && $("sheet-forgot").classList.contains("on")) forgotSend();
   });
 </script>
 </body>

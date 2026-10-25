@@ -249,6 +249,16 @@
   .limitbox .buyvip{display:block;width:100%;margin-top:6px;padding:11px;font-weight:700;font-size:15px;
     background:var(--mafia-tx);color:#fff;border:2px solid var(--line);cursor:pointer;box-shadow:3px 3px 0 rgba(44,44,40,.2)}
   .limitbox .buyvip:active{transform:translate(1px,1px)}
+  .vb-msg{font-size:12px;color:var(--ink-soft);margin-top:8px;min-height:1em}
+  /* настройки: почта, пароль, новости */
+  .acc-section{margin-top:16px;padding-top:12px;border-top:1px dashed var(--ink-soft)}
+  .acc-mail{font-size:13px;line-height:1.5;margin:2px 0 6px;word-break:break-all}
+  .acc-mail .okm{color:var(--good);font-weight:700}
+  .acc-mail .nom{color:var(--mafia-tx);font-weight:700}
+  .acc-row{display:flex;gap:6px}
+  .acc-row input{flex:1;min-width:0}
+  .modal-card .news-chk{display:flex;gap:8px;align-items:flex-start;font-size:13px;line-height:1.45;margin-top:14px;cursor:pointer;color:var(--ink)}
+  .modal-card .news-chk input{width:18px;height:18px;flex:none;margin:1px 0 0;padding:0;accent-color:var(--mafia-tx)}
   /* плашка «к тебе пришла гостья» */
   .held{background:#fde7ef;border-color:#d97a9b}
   .held .who{color:#a0335c}
@@ -836,9 +846,33 @@ function setVipBadge(vipUntil){
 // плашка «бесплатные партии на сегодня закончились» (тексты — Иры)
 function limitBox(a){
   const d=document.createElement('div'); d.className='limitbox ev'; d.id='limitBox';
-  d.innerHTML=`<p>🌙 Бесплатные партии на сегодня закончились. ${a.limit} новых каждый день — после полуночи по Москве.</p>`+
+  d.innerHTML=(a.ipLimit
+      ? `<p>🌙 С этого подключения сегодня уже сыграно много бесплатных партий. Новые — после полуночи по Москве.</p>`
+      : `<p>🌙 Бесплатные партии на сегодня закончились. ${a.limit} новых каждый день — после полуночи по Москве.</p>`)+
     `<p class="vipsell">👑 С VIP — без лимита, глаз бога с первой минуты, выбор роли, размера стола и аватарки.</p>`+
     `<button class="buyvip pixel" onclick="openShop()">👑 Купить VIP</button>`;
+  return d;
+}
+// плашка «подтверди почту» — после первой партии, пока почта не подтверждена
+function verifyBox(e){
+  const d=document.createElement('div'); d.className='limitbox ev'; d.id='verifyBox';
+  const where=e.email?`<b>${String(e.email).replace(/[&<>]/g,'')}</b>`:'твою почту';
+  d.innerHTML=`<p>📧 <b>Подтверди почту, чтобы играть дальше.</b></p>`+
+    (e.mailOn===false
+      ? `<p class="vipsell">Письма пока не отправляются — напиши нам в Telegram <a href="https://t.me/cecTpyxa" target="_blank">@cecTpyxa</a>, подтвердим вручную.</p>`
+      : `<p class="vipsell">Мы отправили письмо со ссылкой на ${where}. Нажми кнопку в письме — и за стол. Не видно? Загляни в «Спам».</p>`)+
+    `<button class="buyvip pixel" id="vbDone">✅ Я подтвердил(а) — играть</button>`+
+    `<button class="st-buy" id="vbResend" style="margin:10px auto 0;display:block">Отправить письмо ещё раз</button>`+
+    `<div class="vb-msg" id="vbMsg"></div>`;
+  d.querySelector('#vbDone').onclick=()=>location.reload();
+  d.querySelector('#vbResend').onclick=async ev=>{
+    const b=ev.target, m=d.querySelector('#vbMsg'); b.disabled=true;
+    try{ const r=await fetch('/verify/resend',{method:'POST'}); const j=await r.json().catch(()=>({}));
+      if(j.already) return location.reload();
+      m.textContent=r.ok?'📬 Отправили ещё раз на '+(j.email||'твою почту'):(j.error||'Не получилось, попробуй позже');
+    }catch(_){ m.textContent='Нет связи с сервером'; }
+    setTimeout(()=>b.disabled=false,20000);
+  };
   return d;
 }
 // ── Экран перед партией: бесплатно — классическая восьмёрка; VIP — ползунок размера стола и выбор роли ──
@@ -948,6 +982,11 @@ function handle(e){
     case "lobby":
       if(!document.getElementById('setupBox')) showSetup();   // связь мигнула на экране выбора — выбор не сбрасываем
       break;
+    case "verify":
+      // первая партия сыграна, почта не подтверждена: партии нет — только плашка
+      if(document.getElementById('verifyBox')) break;
+      players=[];feed.innerHTML="";render();hideInput();
+      add(verifyBox(e));break;
     case "limit":
       // лимит на сегодня исчерпан: партии нет — только плашка
       if(document.getElementById('limitBox')) break;
@@ -1072,6 +1111,12 @@ function openSettings(){
     document.getElementById('bioJob').value=u.bio_job??'';
     document.getElementById('bioHobby').value=u.bio_hobby??'';
     const a=d.account||{};
+    const em=String(u.email||'').replace(/[&<>]/g,'');
+    document.getElementById('accMail').innerHTML = a.emailOk ? `${em} · <span class="okm">подтверждена ✓</span>` : `${em} · <span class="nom">не подтверждена</span>`;
+    document.getElementById('accResend').style.display = a.emailOk ? 'none' : '';
+    document.getElementById('newsChk').checked = !!a.news;
+    ['accMailMsg','pwMsg'].forEach(id=>{ const m=document.getElementById(id); m.className='setmsg'; m.textContent=''; });
+    document.getElementById('pwOld').value=''; document.getElementById('pwNew').value='';
     document.getElementById('acctInfo').innerHTML = (a.vip
       ? '👑 VIP до '+ruDate(a.vipUntil)
       : `Бесплатный аккаунт · сегодня сыграно ${Math.min(a.played||0,a.limit||5)} из ${a.limit||5} партий`)
@@ -1112,6 +1157,27 @@ async function chooseAvatar(file,btn){
   }catch(e){ msg.className='setmsg err'; msg.textContent='Сервер не отвечает'; }
 }
 function closeSettings(){ document.getElementById('settings').style.display='none'; }
+async function resendVerify(){
+  const m=document.getElementById('accMailMsg'), b=document.getElementById('accResend'); b.disabled=true;
+  try{ const r=await fetch('/verify/resend',{method:'POST'}); const j=await r.json().catch(()=>({}));
+    if(j.already){ m.className='setmsg ok'; m.textContent='Почта уже подтверждена ✓'; }
+    else { m.className='setmsg '+(r.ok?'ok':'err'); m.textContent=r.ok?'📬 Письмо отправлено — нажми кнопку в нём. Загляни и в «Спам».':(j.error||'Не получилось'); }
+  }catch(_){ m.className='setmsg err'; m.textContent='Нет связи с сервером'; }
+  setTimeout(()=>b.disabled=false,20000);
+}
+async function changePass(){
+  const m=document.getElementById('pwMsg'), o=document.getElementById('pwOld'), n=document.getElementById('pwNew');
+  try{ const r=await fetch('/password',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({old:o.value,password:n.value})});
+    const j=await r.json().catch(()=>({}));
+    if(r.ok){ m.className='setmsg ok'; m.textContent='Пароль сменён ✓ На других устройствах нужно будет войти заново.'; o.value=''; n.value=''; }
+    else { m.className='setmsg err'; m.textContent=j.error||'Не получилось'; }
+  }catch(_){ m.className='setmsg err'; m.textContent='Нет связи с сервером'; }
+}
+async function saveNews(on){
+  try{ await fetch('/news',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({on})});
+    toast(on?'🎁 Будем присылать новости, подарки и розыгрыши':'Ок, без новостей. Служебные письма (пароль, чеки) всё равно придут.',4000);
+  }catch(_){}
+}
 
 // ── 🛒 Ларёк: выбор товара → страница оплаты ЮKassa → возврат в игру с ?paid=1 ──
 function shopMsg(t){ const m=document.getElementById('shopMsg'); m.textContent=t||''; m.classList.toggle('on',!!t); }
@@ -1153,6 +1219,16 @@ async function checkPaid(n=0){
   if(p&&p.status==='canceled'){ toast('Оплата не прошла — деньги не списаны. Можно попробовать ещё раз в 🛒 Ларьке.',8000,()=>openShop()); return; }
   if(p&&p.status==='pending'&&n<6){ if(!n) toast('⏳ Проверяем оплату…',4000); setTimeout(()=>checkPaid(n+1),3000); return; }
   if(p) toast('⏳ Оплата ещё обрабатывается. Как только ЮKassa подтвердит — VIP или щиты придут сами. Если не пришли за час — напиши нам: ebookee.app@gmail.com',12000);
+}
+{ const q=new URLSearchParams(location.search);
+  if(q.has('verified')||q.has('newpass')){
+    history.replaceState(null,'',location.pathname);
+    setTimeout(()=>{
+      if(q.get('verified')==='1') toast('✅ Почта подтверждена — за стол!',6000);
+      else if(q.has('verified')) toast('Ссылка устарела или уже использована. Новое письмо можно отправить в ⚙️ Настройках.',8000,()=>openSettings());
+      else toast('🔑 Ты вошёл с паролем из письма — теперь он основной. Сменить можно в ⚙️ Настройках.',8000,()=>openSettings());
+    },700);
+  }
 }
 if(new URLSearchParams(location.search).has('paid')){
   history.replaceState(null,'',location.pathname);   // чтобы обновление страницы не проверяло заново
@@ -1337,6 +1413,20 @@ connect();
     <div class="ava-section">
       <label>Выбери своё лицо 👇</label>
       <div id="avaGrid"></div>
+    </div>
+    <div class="acc-section">
+      <label>Почта</label>
+      <div class="acc-mail" id="accMail">…</div>
+      <button class="save" id="accResend" style="display:none" onclick="resendVerify()">Отправить письмо для подтверждения</button>
+      <div class="setmsg" id="accMailMsg"></div>
+      <label style="margin-top:12px">Сменить пароль</label>
+      <div class="acc-row">
+        <input id="pwOld" type="password" autocomplete="current-password" placeholder="Текущий">
+        <input id="pwNew" type="password" autocomplete="new-password" placeholder="Новый (от 6)">
+      </div>
+      <button class="save" onclick="changePass()">Сменить пароль</button>
+      <div class="setmsg" id="pwMsg"></div>
+      <label class="news-chk"><input type="checkbox" id="newsChk" onchange="saveNews(this.checked)"><span>Хочу получать новости, подарки, участвовать в розыгрышах и акциях</span></label>
     </div>
     <div class="soon" id="acctInfo">…</div>
   </div>

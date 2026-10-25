@@ -14,6 +14,8 @@ const HUMAN = process.env.HUMAN === "1" || process.env.HUMAN === "true"; // за
 const HUMAN_ROLE = process.env.HUMAN_ROLE || null;   // какую роль дать человеку (komissar/doctor/mafia/…); пусто = случайная
 const PACING_MS = Number(process.env.PACING_MS ?? 10000);         // пауза между ходами в мс (0 = максимально быстро)
 const FREE_GAMES = Number(process.env.FREE_GAMES ?? 5);
+const IP_FREE_GAMES = Number(process.env.IP_FREE_GAMES ?? 15);   // бесплатных партий в день с одного адреса — по всем аккаунтам вместе
+const VERIFY_AFTER = Number(process.env.VERIFY_AFTER ?? 1);      // после скольких доигранных партий просим подтвердить почту (VIP — не просим)
 const SHIELDS_PER_GAME = 2;                                 // больше щитов за одну партию поставить нельзя   // сколько партий в сутки (по МСК) можно ДОИГРАТЬ без VIP
 const ATMO_TYPING_MS = Number(process.env.ATMO_TYPING_MS ?? 1100); // сколько «печатает…» рассказчик перед ночной/утренней строкой
 const TEMPERATURE = 0.9;     // «живость» речи
@@ -57,6 +59,7 @@ const express = require("express");
 const auth = require("./auth");
 const gamelog = require("./gamelog");   // журнал партий и слов игрока (для статистики теста)
 const payments = require("./payments"); // оплата VIP и щитов через ЮKassa
+const mail = require("./mail");         // письма: подтверди почту, новый пароль
 const PORT = process.env.PORT || 3000;
 // ── Многосессийность: у каждого игрока своя партия ──────────────────────
 const { AsyncLocalStorage } = require("node:async_hooks");
@@ -69,7 +72,8 @@ const CUR = () => als.getStore();      // партия текущего async-к
 // Тип аккаунта для пульта: VIP до какого числа или сколько бесплатных партий уже сыграно сегодня
 function account(u) {
   const vip = auth.isVip(u);
-  return { vip, vipUntil: vip ? u.vip_until : null, played: gamelog.finishedToday(u.id), limit: vip ? null : FREE_GAMES, shields: auth.shieldInfo(u).total };
+  return { vip, vipUntil: vip ? u.vip_until : null, played: gamelog.finishedToday(u.id), limit: vip ? null : FREE_GAMES, shields: auth.shieldInfo(u).total,
+    emailOk: !!u.email_ok, news: !!u.news };
 }
 
 function makeSession(userId, humanName, humanAvatar, humanBio, vip) {
@@ -156,6 +160,20 @@ setInterval(() => { const now = Date.now(); for (const [k, a] of hits) if (!a.le
 const REG_MAX = 10, REG_WIN = 3600e3;        // успешных регистраций с одного адреса в час (с запасом: у мобильных операторов общий адрес на многих)
 const LOGIN_FAIL_MAX = 20, LOGIN_WIN = 900e3; // неудачных входов с одного адреса за 15 минут (защита от подбора паролей)
 
+// Письмо «подтверди почту». force=false — не чаще раза в 10 минут (зовётся при каждом заходе, пока почта не подтверждена)
+const verifySentAt = new Map();   // userId → когда отправляли
+function sendVerifyMail(user, req, force) {
+  if (!mail.enabled()) return false;
+  const last = verifySentAt.get(user.id) || 0;
+  if (!force && Date.now() - last < 10 * 60e3) return last > 0;
+  verifySentAt.set(user.id, Date.now());
+  if (force) hit("verifymail:" + user.id);
+  const base = process.env.PUBLIC_URL || `${req.protocol}://${req.get("host")}`;
+  const link = `${base}/verify?t=${auth.makeVerifyToken(user.id)}`;
+  mail.sendVerify(user, link).catch((e) => { verifySentAt.delete(user.id); console.error("📧 подтверждение:", e.message); });
+  return true;
+}
+
 function startWeb() {
   const app = express();
   app.set("trust proxy", "loopback");   // за «привратником» (Caddy) на этом же сервере берём настоящий адрес игрока
@@ -169,8 +187,8 @@ function startWeb() {
   app.post("/register", (req, res) => {
     const k = "reg:" + req.ip;
     if (recent(k, REG_WIN).length >= REG_MAX) return res.status(429).json({ error: "Слишком много регистраций с этого адреса. Попробуй через час." });
-    const { email, password, name } = req.body || {};
-    const r = auth.register(email, password, name);
+    const { email, password, name, pd, news } = req.body || {};
+    const r = auth.register(email, password, name, { pd: !!pd, news: !!news });
     if (r.error) return res.status(400).json({ error: r.error });
     hit(k);
     res.cookie("sid", r.token, { httpOnly: true, sameSite: "lax", path: "/", maxAge: 30 * 24 * 3600 * 1000 });
@@ -180,15 +198,65 @@ function startWeb() {
     const k = "login:" + req.ip;
     if (recent(k, LOGIN_WIN).length >= LOGIN_FAIL_MAX) return res.status(429).json({ error: "Слишком много неудачных попыток входа. Подожди 15 минут." });
     const { email, password } = req.body || {};
-    const r = auth.login(email, password);
-    if (r.error) { hit(k); return res.status(400).json({ error: r.error }); }
+    const km = "loginmail:" + auth.normEmail(email);
+    const r = auth.login(email, password, recent(km, 24 * 3600e3).length < 30);
+    if (r.error) { hit(k); hit(km); return res.status(400).json({ error: r.error }); }
     res.cookie("sid", r.token, { httpOnly: true, sameSite: "lax", path: "/", maxAge: 30 * 24 * 3600 * 1000 });
-    res.json({ user: r.user });
+    res.json({ user: r.user, fromTemp: !!r.fromTemp });
   });
   app.post("/logout", (req, res) => {
     auth.logout(auth.tokenFromReq(req));
     res.clearCookie("sid", { path: "/" });
     res.json({ ok: true });
+  });
+
+  // ── Почта и пароль ──
+  // «Подтверди почту»: ссылка из письма. Подтвердили — в игру с плашкой «почта подтверждена».
+  app.get("/verify", (req, res) => {
+    const r = auth.confirmEmail(String(req.query.t || ""));
+    res.redirect(r.error ? "/?verified=0" : "/?verified=1");
+  });
+  // отправить письмо ещё раз (кнопка на плашке и в настройках)
+  app.post("/verify/resend", (req, res) => {
+    const me = auth.userByToken(auth.tokenFromReq(req));
+    if (!me) return res.status(401).json({ error: "Не вошёл" });
+    if (me.email_ok) return res.json({ ok: true, already: true });
+    if (!mail.enabled()) return res.status(503).json({ error: "Письма пока не отправляются — напиши нам в Telegram @cecTpyxa" });
+    const k = "verifymail:" + me.id;
+    if (recent(k, 3600e3).length >= 4) return res.status(429).json({ error: "Письмо уже отправлено несколько раз. Проверь «Спам» или попробуй через час." });
+    sendVerifyMail(me, req, true);
+    res.json({ ok: true, email: me.email });
+  });
+  // «Забыли пароль?»: присылаем запоминающийся пароль. Ответ всегда одинаковый — не выдаём, есть ли такая почта.
+  app.post("/forgot", (req, res) => {
+    const email = auth.normEmail((req.body || {}).email);
+    const kip = "forgot:" + req.ip, km = "forgotmail:" + email;
+    if (recent(kip, 3600e3).length >= 6) return res.status(429).json({ error: "Слишком много запросов. Попробуй через час." });
+    hit(kip);
+    if (!mail.enabled()) return res.status(503).json({ error: "Письма пока не отправляются — напиши нам в Telegram @cecTpyxa" });
+    if (email && recent(km, 24 * 3600e3).length < 3) {
+      const r = auth.issueTempPassword(email);
+      if (r) { hit(km); mail.sendNewPassword(r.user, r.password).catch((e) => console.error("📧 новый пароль:", e.message)); }
+    }
+    res.json({ ok: true });
+  });
+  // смена пароля в настройках
+  app.post("/password", (req, res) => {
+    const token = auth.tokenFromReq(req), me = auth.userByToken(token);
+    if (!me) return res.status(401).json({ error: "Не вошёл" });
+    const k = "passchange:" + me.id;
+    if (recent(k, 900e3).length >= 10) return res.status(429).json({ error: "Слишком много попыток. Подожди 15 минут." });
+    hit(k);
+    const r = auth.changePassword(me.id, (req.body || {}).old, (req.body || {}).password, token);
+    if (r.error) return res.status(400).json({ error: r.error });
+    res.json({ ok: true });
+  });
+  // согласие на новости и акции — включить/выключить в настройках
+  app.post("/news", (req, res) => {
+    const me = auth.userByToken(auth.tokenFromReq(req));
+    if (!me) return res.status(401).json({ error: "Не вошёл" });
+    const r = auth.setNews(me.id, !!(req.body || {}).on);
+    res.json({ ok: true, news: !!r.user.news });
   });
 
   // ── Оплата (ЮKassa) — вся логика в payments.js ──
@@ -198,6 +266,7 @@ function startWeb() {
   app.post("/pay/create", async (req, res) => {
     const u = auth.userByToken(auth.tokenFromReq(req));
     if (!u) return res.status(401).json({ error: "Войди в игру, чтобы купить" });
+    if (!u.email_ok) return res.status(403).json({ error: "Сначала подтверди почту: на неё придёт чек, а если забудешь пароль — новый. Письмо можно отправить в ⚙️ Настройках.", needVerify: true });
     const k = "pay:" + u.id;
     if (recent(k, 600e3).length >= 10) return res.status(429).json({ error: "Слишком много попыток оплаты. Подожди 10 минут." });
     hit(k);
@@ -380,6 +449,17 @@ function startWeb() {
         res.write(`data: ${JSON.stringify({ type: "limit", ...acct })}\n\n`);
         return;                                      // соединение держим открытым: иначе браузер станет переподключаться каждые 3 с
       }
+      // первая партия сыграна, а почта не подтверждена — просим подтвердить (письмо уходит само, не чаще раза в 10 минут)
+      if (!acct.vip && !me.email_ok && gamelog.finishedTotal(me.id) >= VERIFY_AFTER) {
+        const sent = sendVerifyMail(me, req, false);
+        res.write(`data: ${JSON.stringify({ type: "verify", email: me.email, sent, mailOn: mail.enabled() })}\n\n`);
+        return;
+      }
+      // общий лимит на адрес: много аккаунтов с одного IP играют бесплатно не больше IP_FREE_GAMES партий в день
+      if (!acct.vip && gamelog.freeFinishedTodayByIp(req.ip) >= IP_FREE_GAMES) {
+        res.write(`data: ${JSON.stringify({ type: "limit", ...acct, ipLimit: true })}\n\n`);
+        return;
+      }
       // настройки ещё не выбраны — показываем экран перед партией, партию не заводим
       const ps = pendingStart.get(me.id);
       if (!ps || Date.now() - ps.at > PENDING_MS) {
@@ -390,6 +470,7 @@ function startWeb() {
       S = makeSession(me.id, me.name, me.avatar, { age: me.bio_age, job: me.bio_job, hobby: me.bio_hobby }, acct.vip);
       S.vipUntil = acct.vipUntil;
       S.setup = ps.setup;
+      S.ip = req.ip;
       sessions.set(me.id, S);                        // первая вкладка — заводим партию
     }
     res.write(`data: ${JSON.stringify({ type: "eye_state", open: eyeOpen(S), premium: !!S.premium, vipUntil: S.vipUntil || null,
@@ -1496,7 +1577,7 @@ async function gameLoop() {
     const mates = G.players.filter((p) => p.role === "mafia" && p !== humanP).map((p) => p.name);
     broadcast({ type: "mates", names: mates });
   }
-  if (humanP && CUR().userId) CUR().gameId = gamelog.startGame(CUR().userId, humanP.name, humanP.role, CUR().premium, G.players.length);   // журнал: партия началась
+  if (humanP && CUR().userId) CUR().gameId = gamelog.startGame(CUR().userId, humanP.name, humanP.role, CUR().premium, G.players.length, CUR().ip);   // журнал: партия началась
 
   console.log(BOLD(`\n════ МАФИЯ · провайдер: ${PROVIDER} · модель: ${PROVIDERS[PROVIDER].model} ════`));
   if (SHOW_SECRETS) {

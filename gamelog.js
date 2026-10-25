@@ -58,9 +58,11 @@ try { db.exec("ALTER TABLE games ADD COLUMN quit INTEGER"); } catch (_) {}
 try { db.exec("ALTER TABLE games ADD COLUMN shields INTEGER NOT NULL DEFAULT 0"); } catch (_) {}
 try { db.exec("ALTER TABLE games ADD COLUMN shield_saves INTEGER NOT NULL DEFAULT 0"); } catch (_) {}
 
-const startGame = safe((userId, userName, role, vip, size) =>
-  Number(db.prepare("INSERT INTO games (user_id, user_name, role, started, vip, size) VALUES (?, ?, ?, ?, ?, ?)")
-    .run(userId, userName, role, Date.now(), vip ? 1 : 0, size || 8).lastInsertRowid));
+// ip — адрес, с которого играли: общий дневной лимит бесплатных партий на один адрес (против фабрики фейковых аккаунтов)
+try { db.exec("ALTER TABLE games ADD COLUMN ip TEXT"); } catch (_) {}
+const startGame = safe((userId, userName, role, vip, size, ip) =>
+  Number(db.prepare("INSERT INTO games (user_id, user_name, role, started, vip, size, ip) VALUES (?, ?, ?, ?, ?, ?, ?)")
+    .run(userId, userName, role, Date.now(), vip ? 1 : 0, size || 8, ip || null).lastInsertRowid));
 
 const logMsg = safe((gameId, userId, day, kind, target, text) => {
   if (!gameId) return;
@@ -162,4 +164,16 @@ function finishedToday(userId) {
   catch (e) { console.error("журнал партий:", e.message); return 0; }   // журнал сломался — лимит не мешает играть
 }
 
-module.exports = { db, startGame, logMsg, finishGame, quitGame, shieldUsed, shieldSaved, logAiCall, pointsFor, leaderboard, invalidateLeaderboard, weekStart, dayStart, finishedToday };
+// Сколько партий игрок доиграл за всё время (для «подтверди почту после первой партии»)
+function finishedTotal(userId) {
+  try { return db.prepare("SELECT COUNT(*) AS n FROM games WHERE user_id = ? AND finished IS NOT NULL").get(userId).n; }
+  catch (e) { console.error("журнал партий:", e.message); return 0; }
+}
+// Сколько БЕСПЛАТНЫХ партий доиграно сегодня с этого адреса — по всем аккаунтам вместе
+function freeFinishedTodayByIp(ip) {
+  if (!ip) return 0;
+  try { return db.prepare("SELECT COUNT(*) AS n FROM games WHERE ip = ? AND finished >= ? AND (vip IS NULL OR vip = 0)").get(ip, dayStart()).n; }
+  catch (e) { console.error("журнал партий:", e.message); return 0; }
+}
+
+module.exports = { finishedTotal, freeFinishedTodayByIp, db, startGame, logMsg, finishGame, quitGame, shieldUsed, shieldSaved, logAiCall, pointsFor, leaderboard, invalidateLeaderboard, weekStart, dayStart, finishedToday };

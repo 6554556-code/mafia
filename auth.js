@@ -41,8 +41,25 @@ try { db.exec("ALTER TABLE users ADD COLUMN vip_until INTEGER"); } catch (_) {}
 // Миграция: щиты. shields — купленные (не сгорают); shield_gift — день (МСК), когда уже взят подарочный щит.
 try { db.exec("ALTER TABLE users ADD COLUMN shields INTEGER NOT NULL DEFAULT 0"); } catch (_) {}
 try { db.exec("ALTER TABLE users ADD COLUMN shield_gift TEXT"); } catch (_) {}
+// Миграция: почта и согласия.
+//   email_ok   — 1 = почта подтверждена (по ссылке из письма или входом с паролем из письма)
+//   pd_consent — когда дано согласие на обработку персональных данных (метка времени); у старых игроков NULL
+//   news       — 1 = согласие на новости и акции (рассылки); снимается в настройках
+//   temp_pass / temp_until — запасной пароль из письма «Забыли пароль?»: старый при этом продолжает работать
+for (const col of ["email_ok INTEGER NOT NULL DEFAULT 0", "pd_consent INTEGER", "news INTEGER NOT NULL DEFAULT 0", "temp_pass TEXT", "temp_until INTEGER"]) {
+  try { db.exec(`ALTER TABLE users ADD COLUMN ${col}`); } catch (_) {}
+}
+// Ключи из писем «подтверди почту». В базе — только отпечаток ключа, сам ключ живёт лишь в письме.
+db.exec(`
+  CREATE TABLE IF NOT EXISTS email_tokens (
+    hash    TEXT PRIMARY KEY,
+    user_id INTEGER NOT NULL,
+    created INTEGER NOT NULL,
+    expires INTEGER NOT NULL
+  );
+`);
 // Какие поля пользователя отдаём наружу (пароль и прочее — никогда)
-const USER_COLS = "id, email, name, avatar, bio_age, bio_job, bio_hobby, vip_until";
+const USER_COLS = "id, email, name, avatar, bio_age, bio_job, bio_hobby, vip_until, email_ok, news";
 
 // Список .png в папке avatars/<sub>, в виде "<sub>/файл.png"
 function listDir(sub) {
@@ -79,15 +96,28 @@ function verifyPassword(password, stored) {
 // ── Нормализация и простая валидация ──
 function normEmail(e) { return String(e || "").trim().toLowerCase(); }
 function validEmail(e) { return /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(e); }
+// Почты-однодневки: на них не подтвердить аккаунт всерьёз — регистрацию с ними не принимаем
+const DISPOSABLE = new Set(("temp-mail.org temp-mail.io tempmail.com tempmail.net tempmail.plus tempmailo.com tempr.email 10minutemail.com 10minutemail.net "
+  + "10minemail.com guerrillamail.com guerrillamail.net guerrillamail.org guerrillamailblock.com sharklasers.com grr.la pokemail.net spam4.me "
+  + "mailinator.com mailinator.net maildrop.cc yopmail.com yopmail.net yopmail.fr cool.fr.nf jetable.fr.nf nospam.ze.tc nomail.xl.cx mega.zik.dj "
+  + "throwawaymail.com trashmail.com trashmail.de trashmail.net getnada.com nada.email dispostable.com mailnesia.com mohmal.com emailondeck.com "
+  + "fakeinbox.com fakemail.net mintemail.com mytemp.email tempail.com tempmailaddress.com burnermail.io inboxkitten.com mailpoof.com "
+  + "dropmail.me 1secmail.com 1secmail.net 1secmail.org esiix.com wwjmp.com xojxe.com yoggm.com emltmp.com spymail.one minuteinbox.com "
+  + "crazymailing.com tmail.ws tmpmail.org tmpmail.net mail.tm mailto.plus fexpost.com fexbox.org rover.info firemail.cc "
+  + "linshiyouxiang.net 33mail.com anonaddy.me harakirimail.com mailcatch.com discard.email emailfake.com generator.email "
+  + "tempmail.dev vusra.com tempm.com").split(/\s+/));
+const isDisposable = (email) => DISPOSABLE.has(String(email).split("@")[1] || "");
 // Игровой ник: 2–16 символов — буквы любого языка, цифры, пробел, дефис, подчёркивание.
 function validName(n) { return /^[\p{L}\p{N} _-]{2,16}$/u.test(n); }
 
 // ── Регистрация: заводит пользователя и сразу открывает сессию ──
-function register(email, password, name) {
+function register(email, password, name, consent = {}) {
   email = normEmail(email);
   name = String(name || "").trim();
   password = String(password || "");
   if (!validEmail(email)) return { error: "Некорректная почта" };
+  if (isDisposable(email)) return { error: "Временные почты не подходят — укажи свою настоящую: на неё придёт письмо" };
+  if (!consent.pd) return { error: "Нужно согласие на обработку персональных данных" };
   if (password.length < 6)  return { error: "Пароль минимум 6 символов" };
   if (!validName(name))     return { error: "Ник: 2–16 символов — буквы, цифры, пробел, дефис или подчёркивание" };
 
@@ -98,22 +128,85 @@ function register(email, password, name) {
   if (nameTaken) return { error: "Этот ник уже занят" };
 
   const info = db.prepare(
-    "INSERT INTO users (email, pass, name, name_lower, avatar, created) VALUES (?, ?, ?, ?, ?, ?)"
-  ).run(email, hashPassword(password), name, nameLower, randomNeutral(), Date.now());
+    "INSERT INTO users (email, pass, name, name_lower, avatar, created, pd_consent, news) VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
+  ).run(email, hashPassword(password), name, nameLower, randomNeutral(), Date.now(), Date.now(), consent.news ? 1 : 0);
 
   return startSession(info.lastInsertRowid);
 }
 
 // ── Вход ──
-function login(email, password) {
+// allowTemp=false — запасной пароль из письма не проверяем (на эту почту уже было слишком много неверных попыток)
+function login(email, password, allowTemp = true) {
   email = normEmail(email);
+  password = String(password || "");
   const u = db.prepare("SELECT * FROM users WHERE email = ?").get(email);
   // одинаковый ответ на «нет почты» и «неверный пароль» — не подсказываем, что есть в базе
-  if (!u || !verifyPassword(String(password || ""), u.pass)) {
-    return { error: "Неверная почта или пароль" };
+  if (!u) return { error: "Неверная почта или пароль" };
+  if (verifyPassword(password, u.pass)) return startSession(u.id);
+  // запасной пароль из письма: вошёл с ним — он становится основным, а почта считается подтверждённой (письмо-то дошло)
+  if (allowTemp && u.temp_pass && u.temp_until > Date.now() && verifyPassword(password, u.temp_pass)) {
+    db.prepare("UPDATE users SET pass = temp_pass, temp_pass = NULL, temp_until = NULL, email_ok = 1 WHERE id = ?").run(u.id);
+    return { ...startSession(u.id), fromTemp: true };
   }
-  return startSession(u.id);
+  return { error: "Неверная почта или пароль" };
 }
+
+// ── «Забыли пароль?»: придумываем запоминающийся пароль и кладём его ЗАПАСНЫМ на 24 часа.
+//    Старый пароль продолжает работать — чужак, вписавший твою почту, ничего не сломает.
+const PW_ADJ = ("Lucky Sleepy Sneaky Brave Blonde Silent Crafty Wild Shady Golden Midnight Cunning Lazy Grumpy Jolly Rusty Smooth Velvet "
+  + "Crazy Fancy Tricky Happy Dizzy Hungry Loyal Secret Clever Funky Spicy Fluffy Witty Bold Rich Noble Cool Silly Sweet Sly Sharp Tipsy "
+  + "Dapper Sassy Cheeky Mighty Royal Cosmic Sunny Stormy Frosty Neon").split(" ");
+const PW_NOUN = ("Don Cop Boss Doctor Alibi Witness Godfather Sheriff Gangster Detective Mafioso Hustler Bandit Rose Cigar Whisper "
+  + "Casino Diamond Shadow Tommy Vinnie Joker Ace Queen Fedora Martini Jazz Kitty Raven Fox Wolf Panther Tiger Bunny Pirate Ninja "
+  + "Judge Rascal Baron Duchess Lady Hobo Moon Poker Saxophone Cadillac Croupier Spy").split(" ");
+const pick = (a) => a[crypto.randomInt(a.length)];
+function funPassword() {
+  const n = String(crypto.randomInt(10, 100));
+  return crypto.randomInt(6) === 0 ? `ILove${pick(PW_NOUN)}${n}` : `${pick(PW_ADJ)}${pick(PW_NOUN)}${n}`;
+}
+const TEMP_MS = 24 * 3600e3;
+function issueTempPassword(email) {
+  email = normEmail(email);
+  const u = db.prepare("SELECT id, email, name FROM users WHERE email = ?").get(email);
+  if (!u) return null;                                   // наружу всё равно отвечаем одинаково
+  const password = funPassword();
+  db.prepare("UPDATE users SET temp_pass = ?, temp_until = ? WHERE id = ?").run(hashPassword(password), Date.now() + TEMP_MS, u.id);
+  return { user: u, password };
+}
+
+// ── Смена пароля в настройках: нужен текущий (или запасной из письма). Остальные входы на других устройствах закрываем. ──
+function changePassword(userId, oldPass, newPass, keepToken) {
+  oldPass = String(oldPass || ""); newPass = String(newPass || "");
+  const u = db.prepare("SELECT pass, temp_pass, temp_until FROM users WHERE id = ?").get(userId);
+  if (!u) return { error: "Нет такого игрока" };
+  const okOld = verifyPassword(oldPass, u.pass) || (u.temp_pass && u.temp_until > Date.now() && verifyPassword(oldPass, u.temp_pass));
+  if (!okOld) return { error: "Текущий пароль не подходит" };
+  if (newPass.length < 6) return { error: "Новый пароль — минимум 6 символов" };
+  db.prepare("UPDATE users SET pass = ?, temp_pass = NULL, temp_until = NULL WHERE id = ?").run(hashPassword(newPass), userId);
+  db.prepare("DELETE FROM sessions WHERE user_id = ? AND token != ?").run(userId, String(keepToken || ""));
+  return { ok: true };
+}
+
+// ── Подтверждение почты: одноразовый ключ на 7 дней, в базе только его отпечаток ──
+const sha = (t) => crypto.createHash("sha256").update(String(t)).digest("hex");
+function makeVerifyToken(userId) {
+  const token = crypto.randomBytes(24).toString("base64url");
+  db.prepare("DELETE FROM email_tokens WHERE user_id = ? OR expires < ?").run(userId, Date.now());   // старые ссылки этого игрока гаснут
+  db.prepare("INSERT INTO email_tokens (hash, user_id, created, expires) VALUES (?, ?, ?, ?)").run(sha(token), userId, Date.now(), Date.now() + 7 * 24 * 3600e3);
+  return token;
+}
+function confirmEmail(token) {
+  const row = db.prepare("SELECT user_id, expires FROM email_tokens WHERE hash = ?").get(sha(token));
+  if (!row || row.expires < Date.now()) return { error: "Ссылка устарела или уже использована" };
+  db.prepare("UPDATE users SET email_ok = 1 WHERE id = ?").run(row.user_id);
+  db.prepare("DELETE FROM email_tokens WHERE user_id = ?").run(row.user_id);
+  return { userId: row.user_id };
+}
+function setNews(userId, on) {
+  db.prepare("UPDATE users SET news = ? WHERE id = ?").run(on ? 1 : 0, userId);
+  return { user: db.prepare(`SELECT ${USER_COLS} FROM users WHERE id = ?`).get(userId) };
+}
+function userById(id) { return db.prepare(`SELECT ${USER_COLS} FROM users WHERE id = ?`).get(id) || null; }
 
 // ── Сессии (в базе — переживают перезапуск сервера) ──
 function startSession(userId) {
@@ -239,4 +332,5 @@ function shieldAdd(email, n) {
   return { user: db.prepare(`SELECT ${USER_COLS} FROM users WHERE id = ?`).get(u.id), info: shieldInfo(u) };
 }
 
-module.exports = { shieldInfo, useShield, shieldAdd, register, login, logout, userByToken, tokenFromReq, rename, setAvatar, listAvatars, setBio, isVip, vipAdd, vipOff, vipList };
+module.exports = { issueTempPassword, changePassword, makeVerifyToken, confirmEmail, setNews, userById, funPassword, normEmail,
+  shieldInfo, useShield, shieldAdd, register, login, logout, userByToken, tokenFromReq, rename, setAvatar, listAvatars, setBio, isVip, vipAdd, vipOff, vipList };
