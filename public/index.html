@@ -335,7 +335,8 @@
 
   .conn{position:fixed;top:6px;right:10px;font-size:11px;color:#5a5a52;
     background:var(--paper);border:2px solid var(--line);padding:2px 8px}
-  .conn.live{color:var(--good)}
+  /* «● эфир» (связь есть) не показываем нигде — плашка видна, только пока подключаемся или связи нет */
+  .conn.live{display:none}
   .conn.demo{color:#a6791f}
 
 
@@ -411,8 +412,6 @@
     .feed{padding:2px 3px 2px 2px;gap:5px}
     .plaque{font-size:14px;padding:6px 8px}
     .inputbar{padding:6px}
-    /* плашка «эфир» наезжает на шапку — на телефоне показываем её, только пока связи нет */
-    .conn.live{display:none}
     /* iPhone увеличивает страницу при фокусе на поле с шрифтом < 16px — даём 16 */
     .inputrow input,#voteReason,#whisperText,#replyText,.modal-card input{font-size:16px}
     .btn{padding:8px 12px}
