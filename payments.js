@@ -69,10 +69,11 @@ function notifyPaid(row, item) {
 const API = process.env.YK_API || "https://api.yookassa.ru/v3";   // YK_API — только для проверки на стенде
 const enabled = () => !!(process.env.YK_SHOP_ID && process.env.YK_SECRET);
 // Тестовый магазин (ключ test_…): тестовые карты публичные, поэтому покупать могут ТОЛЬКО почты из YK_TEST_USERS
-// (через запятую). Остальным — «оплата скоро заработает». С боевым ключом (live_…) ограничения нет.
+// (через запятую; * — все). Остальным — «оплата скоро заработает». С боевым ключом (live_…) ограничения нет.
 const testMode = () => String(process.env.YK_SECRET || "").startsWith("test_");
-const testAllowed = (email) => String(process.env.YK_TEST_USERS || "").toLowerCase().split(",").map((x) => x.trim()).filter(Boolean)
-  .includes(String(email || "").toLowerCase());
+// YK_TEST_USERS=* — разрешить тестовые покупки всем
+const testAllowed = (email) => { const list = String(process.env.YK_TEST_USERS || "").toLowerCase().split(",").map((x) => x.trim()).filter(Boolean);
+  return list.includes("*") || list.includes(String(email || "").toLowerCase()); };
 const authHeader = () => "Basic " + Buffer.from(`${process.env.YK_SHOP_ID}:${process.env.YK_SECRET}`).toString("base64");
 
 async function yk(method, url, body) {
