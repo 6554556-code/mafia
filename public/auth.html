@@ -75,6 +75,12 @@
   /* ── окна (вход/регистрация и правила) ── */
   .sheet{position:fixed;inset:0;z-index:10;display:none;align-items:center;justify-content:center;padding:14px;background:rgba(10,12,20,.62)}
   .sheet.on{display:flex;animation:fade .18s ease-out}
+  /* документ поверх регистрации: закрыл — и ты снова в форме, введённое на месте */
+  #sheet-doc{z-index:20}
+  .doc-card{position:relative;width:100%;max-width:760px;height:calc(100dvh - 28px);background:var(--paper);border:3px solid var(--line);
+    box-shadow:4px 4px 0 rgba(0,0,0,.35);display:flex;flex-direction:column}
+  .doc-card iframe{flex:1;width:100%;border:0;background:var(--paper)}
+  .doc-card .close{z-index:2;background:var(--paper);border-radius:4px;top:4px;right:6px}
   @keyframes fade{from{opacity:0}to{opacity:1}}
   .card{
     position:relative;width:100%;max-width:400px;max-height:calc(100dvh - 28px);overflow-y:auto;
@@ -149,12 +155,19 @@
       <input id="password" type="password" autocomplete="current-password" placeholder="минимум 6 символов">
 
       <button class="btn" id="submit">ВОЙТИ</button>
-      <div class="agree" id="agree18" style="display:none">Психологическая игра 18+. Регистрируясь, ты подтверждаешь, что тебе есть 18 лет, и принимаешь <a href="oferta.html" target="_blank">оферту</a> и <a href="privacy.html" target="_blank">политику конфиденциальности</a>.</div>
+      <div class="agree" id="agree18" style="display:none">Психологическая игра 18+. Регистрируясь, ты подтверждаешь, что тебе есть 18 лет, и принимаешь <a href="oferta.html" onclick="return openDoc(this)">оферту</a> и <a href="privacy.html" onclick="return openDoc(this)">политику конфиденциальности</a>.</div>
       <div class="msg" id="msg"></div>
     </div>
   </div>
 
   <!-- Правила -->
+  <div class="sheet" id="sheet-doc" onclick="if(event.target===this)closeDoc()">
+    <div class="doc-card" role="dialog" aria-label="Документ">
+      <button class="close" onclick="closeDoc()" aria-label="Закрыть">✕</button>
+      <iframe id="docFrame" title="Документ"></iframe>
+    </div>
+  </div>
+
   <div class="sheet" id="sheet-rules" onclick="if(event.target===this)closeSheets()">
     <div class="card rules" role="dialog" aria-label="Правила">
       <button class="close" onclick="closeSheets()" aria-label="Закрыть">✕</button>
@@ -200,6 +213,13 @@
     if(which==="auth"){ setMode(seenBefore() ? "login" : "register"); setTimeout(()=>$("email").focus(),50); }
   }
   function closeSheets(){ document.querySelectorAll(".sheet").forEach(s=>s.classList.remove("on")); }
+  // оферта и политика — в этой же вкладке, поверх формы; крестик возвращает в форму
+  function openDoc(a){
+    $("docFrame").src = a.getAttribute("href") + "?embed=1";
+    $("sheet-doc").classList.add("on");
+    return false;
+  }
+  function closeDoc(){ $("sheet-doc").classList.remove("on"); }
 
   function setMode(m){
     mode = m;
@@ -240,7 +260,7 @@
   // прямая ссылка на правила: /auth.html#rules (из раздела «Документы»)
   if (location.hash === "#rules") openSheet("rules");
   document.addEventListener("keydown", (e) => {
-    if(e.key === "Escape") closeSheets();
+    if(e.key === "Escape"){ if($("sheet-doc").classList.contains("on")) closeDoc(); else closeSheets(); }
     if(e.key === "Enter" && $("sheet-auth").classList.contains("on")) go();
   });
 </script>
