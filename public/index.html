@@ -70,7 +70,9 @@
   .chip.day .day-role{display:none;color:#b5352c;font-size:15px;font-weight:700}
   .chip.day.has-role .day-role{display:block}
   .chip.day.has-role .day-num{font-size:11px;font-weight:600}
-  .chip.mode{margin-left:auto;color:#3d3d3d}
+  .chip.mode{color:#3d3d3d}
+  .chip.shop{margin-left:auto;cursor:pointer;user-select:none;font-size:16px;opacity:.85;transition:opacity .15s,transform .15s}
+  .chip.shop:hover{opacity:1;transform:translateY(-1px)}
   .chip .eye{font-size:15px}
   /* ── Глаз бога: выключатель секретов ─────────── */
   .chip.mode{cursor:pointer;user-select:none;opacity:.55;transition:opacity .15s}
@@ -389,7 +391,14 @@
     .chip{padding:3px 8px;font-size:13px}
     .chip.day .day-role{font-size:14px}
     .chip.mode .eye-txt{display:none}
-    .chip.mode,.chip.door,.chip.gear,.chip.lb{min-width:36px;padding:3px 6px;justify-content:center}
+    .chip.mode,.chip.door,.chip.gear,.chip.lb,.chip.shop{min-width:36px;padding:3px 6px;justify-content:center}
+  }
+  /* совсем узкие телефоны: в шапке шесть кнопок — ужимаемся, чтобы шестерёнка не уезжала за край */
+  @media (max-width:400px){
+    .topbar{gap:3px;padding:3px}
+    .title{font-size:16px;padding:3px 6px}
+    .chip{padding:3px 6px}
+    .chip.mode,.chip.door,.chip.gear,.chip.lb,.chip.shop{min-width:0;flex:0 1 32px;padding:3px 2px;font-size:14px}
     /* стол: 8 в ряд (при 16 игроках — 2 ряда), компактно */
     .seatsWrap{padding:3px}
     .seats{gap:2px}
@@ -428,6 +437,7 @@
     <div class="panel topbar">
       <div class="title pixel">МАФИЯ<span class="vip-badge" id="vipBadge" style="display:none" title="VIP">👑</span><span class="sh-badge" id="shBadge" onclick="shieldInfo()" title="Щиты">🛡<b id="shCount">0</b></span></div>
       <div class="chip day pixel" id="dayChip" title="Твоя роль — нажми для памятки" onclick="if(myRole&&ROLE_MEMO[myRole])toast(memoOf(myRole),9000)"><span class="day-role" id="youRole"></span><span class="day-num">☀ <span id="dayLabel">День 1</span></span></div>
+      <div class="chip shop pixel" id="shopBtn" title="Ларёк: VIP и щиты" onclick="openShop()">🛒</div>
       <div class="chip mode pixel locked" id="eyeBtn" onclick="toggleEye()" title="Откроется, когда выбудешь из игры · сразу — в VIP 👑"><span class="eye">👁</span><span class="eye-txt">Глаз бога</span></div>
       <div class="chip lb pixel" id="lbBtn" title="Турнирная таблица" onclick="openLeaderboard()">🏆</div>
       <div class="chip door pixel" id="logoutBtn" title="Выход" onclick="fetch('/logout',{method:'POST'}).finally(()=>location.href='/auth.html')">🚪</div>
