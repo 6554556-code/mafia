@@ -1070,16 +1070,22 @@ function limitWords(text, n) {
   return w.slice(0, n).join(" ").replace(/[,;:—–-]+$/, "") + "…";
 }
 
-async function aiSpeak(p, round, plan) {
-  const dark = p.role === "mafia" || p.role === "maniac";
-  // Свой с ночной находкой: раз в день выкладывает её прямо, с ролью; дальше — давит фактами
+// Есть ли у игрока ночная находка, которую по его стилю пора выложить (или кто-то присвоил его роль)
+function findState(p) {
   const pr = G.priv[p.name];
   const reveal = p.human ? "now" : styleOf(p).reveal, stolen = !p.human && roleStolen(p);
   const strong = p.role === "komissar" ? pr.checks.some((c) => isDark(c.role)) : p.role === "putana" ? pr.visits.some((v) => v.busy)
     : p.role === "bomzh" ? pr.watches.some((w) => /приходили|ВЫХОДИЛ/.test(w)) : false;
   const anyFind = p.role === "putana" ? pr.visits.length : p.role === "bomzh" ? pr.watches.length : p.role === "komissar" ? pr.checks.length : 0;
-  const hasFind = stolen || (anyFind && (reveal === "now" || (reveal === "need" && strong)));
+  const hasFind = stolen || !!(anyFind && (reveal === "now" || (reveal === "need" && strong)));
   const toldToday = claims().some((c) => c.name === p.name && c.last.day === G.day);
+  return { hasFind, stolen, toldToday };
+}
+async function aiSpeak(p, round, plan) {
+  const dark = p.role === "mafia" || p.role === "maniac";
+  // Свой с ночной находкой: раз в день выкладывает её прямо, с ролью; дальше — давит фактами
+  const pr = G.priv[p.name];
+  const { hasFind, stolen, toldToday } = findState(p);
   const findLine = !hasFind ? "" : toldToday
     ? "\n— НАХОДКУ ты сегодня уже выложил(а): не повторяй её слово в слово — дави фактами на того, на кого она указывает, или спокойно отвечай тем, кто сомневается."
     : stolen ? "\n— КТО-ТО ПРИСВОИЛ ТВОЮ РОЛЬ: эта реплика про это. Назови свою роль, скажи, что он врёт, и выложи свои находки — прямо и спокойно."
@@ -1586,11 +1592,30 @@ function isEcho(p, text) {
   });
 }
 
+// Второй круг — только тем, кому есть что сказать: кого назвали по имени в первом круге (ответить / защититься),
+// у кого невыложенная находка или присвоили роль; живой человек — всегда. Остальные уже всё сказали.
+const nameKey = (n) => n.toLowerCase().replace(/[^а-яёa-z]/g, "").slice(0, 4);
+function round2Speakers(round1Start) {
+  const said = G.log.slice(round1Start).filter((e) => e.kind === "say");
+  return living().filter((p) => {
+    if (p.human) return true;
+    const key = nameKey(p.name);
+    const named = key.length >= 3 && said.some((e) => e.name !== p.name && e.text.toLowerCase().replace(/ё/g, "е").includes(key.replace(/ё/g, "е")));
+    const f = findState(p);
+    return named || (f.hasFind && !f.toldToday);
+  });
+}
+
 async function doDiscussion() {
   setPhase("day");                                     // обсуждение — щит можно поставить до начала голосования
+  let round1Start = G.log.length;
   for (let round = 1; round <= 2; round++) {
+    const speakers = round === 1 ? living() : round2Speakers(round1Start);
+    if (round === 2 && !speakers.length) break;        // всем всё сказано — сразу к голосованию
     narrator(`— круг обсуждения ${round}/2 —`);
-    for (const p of shuffle(living())) {
+    if (round === 1) round1Start = G.log.length;
+    for (const p of shuffle(speakers)) {
+      if (!p.alive) continue;
       if (p.human) {
         const ans = await awaitHuman("say", { name: p.name, round });
         const msg = (ans.text || "").trim();
