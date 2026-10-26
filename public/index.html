@@ -213,6 +213,10 @@
   }
   .say{background:var(--paper)}
   .say .who .nm{font-weight:700}
+  /* свои реплики — подсвечены */
+  .say.mine{background:#fff6d6;border-color:#d4bd4c;box-shadow:inset 3px 0 0 #d4bd4c}
+  .you{font-weight:700;font-size:.85em;color:#8a6d12}
+  .vote.mine{background:#fff6d6}
   .think{background:var(--think-bg);border-color:var(--think-br)}
   .think .who{color:var(--think-tx)}
   .think .who::after{content:"думает";font-weight:600;opacity:.7;font-size:12px}
@@ -1045,9 +1049,9 @@ function handle(e){
     case "narrator":
       add(el("narr",esc(e.text)));break;
     case "say":{
-      const col=deep(e.c);
-      add(el("plaque say",
-        `<div class="who"><span class="nm" style="color:${col}">${esc(e.name)}</span></div>`+
+      const col=deep(e.c), me=e.name===myName;
+      add(el("plaque say"+(me?" mine":""),
+        `<div class="who"><span class="nm" style="color:${col}">${esc(e.name)}</span>${me?' <span class="you">(ты)</span>':''}</div>`+
         `<div>${esc(e.text)}</div>`));break;}
     case "silence":
       add(el("narr",esc(e.name)+" промолчал…"));break;
@@ -1066,7 +1070,7 @@ function handle(e){
       add(el("plaque death",
         `<span class="skull">💀</span><span>${esc(e.text)}</span>`));break;
     case "vote":
-      add(el("vote",`${esc(e.voter)} → <b>${esc(e.target)}</b>`+(e.reason?` · ${esc(e.reason)}`:"")));break;
+      add(el("vote"+(e.voter===myName?" mine":""),`${esc(e.voter)}${e.voter===myName?' <span class="you">(ты)</span>':''} → <b>${esc(e.target)}</b>`+(e.reason?` · ${esc(e.reason)}`:"")));break;
     case "gameover":
       gameOver=true; updateQuit(); updateShield();
       add(el("over",esc(e.text)));showReplay();break;
