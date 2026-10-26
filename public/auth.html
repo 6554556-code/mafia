@@ -235,7 +235,20 @@
   function seenBefore(){ try{ return localStorage.getItem("mafia_seen")==="1"; }catch(_){ return false; } }
   function markSeen(){ try{ localStorage.setItem("mafia_seen","1"); }catch(_){} }
 
+  // Уже вошёл (сессия жива) — «Вход» и «Играть» ведут сразу за стол. Сменить аккаунт — через 🚪 в игре.
+  let loggedIn = false;
+  function checkSession(){
+    fetch("/me", { cache: "no-store" }).then(r => r.json()).then(d => { loggedIn = !!(d && d.user); }).catch(() => {});
+  }
+  checkSession();
+  // «Назад» из игры: браузер достаёт страницу из памяти вместе с выключенной кнопкой «ВОЙТИ» — оживляем её и перепроверяем вход
+  window.addEventListener("pageshow", (e) => {
+    btn.disabled = false; $("fpSend").disabled = false; hideMsg();
+    if (e.persisted) checkSession();
+  });
+
   function openSheet(which){
+    if(which==="auth" && loggedIn){ location.href = "/"; return; }
     closeSheets();
     $("sheet-"+which).classList.add("on");
     if(which==="auth"){ setMode(seenBefore() ? "login" : "register"); setTimeout(()=>$("email").focus(),50); }
