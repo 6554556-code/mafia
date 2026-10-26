@@ -241,6 +241,17 @@ function startWeb() {
     }
     res.json({ ok: true });
   });
+  // «Отписаться от новостей» — ссылка из рекламного письма (GET — человек кликнул; POST — почтовик «в один клик»)
+  const unsubPage = (ok) => `<!doctype html><html lang="ru"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Отписка — Мафия с ИИ</title></head>
+<body style="margin:0;background:#0f1424;font-family:Arial,sans-serif;display:grid;place-items:center;min-height:100vh;padding:16px;box-sizing:border-box">
+<div style="max-width:380px;background:#f2efe6;border:3px solid #2c2c28;padding:22px;text-align:center;color:#2c2c28;line-height:1.5">
+<div style="font-family:'Courier New',monospace;font-size:24px;font-weight:bold;letter-spacing:3px;color:#b5352c;margin-bottom:10px">МАФИЯ</div>
+${ok ? "<p>Готово — новостей и акций больше не пришлём. 🤫</p><p style=\"font-size:13px;color:#5a5a52\">Служебные письма (новый пароль, чеки) всё равно будут приходить. Передумаешь — включи галочку в ⚙️ Настройках игры.</p>"
+     : "<p>Ссылка повреждена. Отписаться можно в ⚙️ Настройках игры — сними галочку «новости».</p>"}
+<p><a href="/" style="color:#b5352c;font-weight:bold">В игру →</a></p></div></body></html>`;
+  app.get("/unsub", (req, res) => res.send(unsubPage(!auth.unsubscribe(req.query.u, req.query.s).error)));
+  app.post("/unsub", express.urlencoded({ extended: false }), (req, res) => { auth.unsubscribe(req.query.u, req.query.s); res.send("ok"); });
+
   // смена пароля в настройках
   app.post("/password", (req, res) => {
     const token = auth.tokenFromReq(req), me = auth.userByToken(token);

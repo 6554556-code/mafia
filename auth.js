@@ -206,6 +206,22 @@ function setNews(userId, on) {
   db.prepare("UPDATE users SET news = ? WHERE id = ?").run(on ? 1 : 0, userId);
   return { user: db.prepare(`SELECT ${USER_COLS} FROM users WHERE id = ?`).get(userId) };
 }
+// ── Отписка от новостей по ссылке из письма: подпись = HMAC(номер игрока) на секретном ключе, который хранится в базе ──
+db.exec("CREATE TABLE IF NOT EXISTS app_kv (k TEXT PRIMARY KEY, v TEXT NOT NULL)");
+function appSecret() {
+  let row = db.prepare("SELECT v FROM app_kv WHERE k = 'unsub_key'").get();
+  if (!row) { db.prepare("INSERT OR IGNORE INTO app_kv (k, v) VALUES ('unsub_key', ?)").run(crypto.randomBytes(32).toString("hex")); row = db.prepare("SELECT v FROM app_kv WHERE k = 'unsub_key'").get(); }
+  return row.v;
+}
+const unsubSig = (userId) => crypto.createHmac("sha256", appSecret()).update("unsub:" + userId).digest("base64url").slice(0, 24);
+function unsubscribe(userId, sig) {
+  userId = Number(userId);
+  if (!Number.isInteger(userId) || !sig) return { error: "Ссылка повреждена" };
+  const good = Buffer.from(unsubSig(userId)), got = Buffer.from(String(sig));
+  if (good.length !== got.length || !crypto.timingSafeEqual(good, got)) return { error: "Ссылка повреждена" };
+  db.prepare("UPDATE users SET news = 0 WHERE id = ?").run(userId);
+  return { ok: true };
+}
 function userById(id) { return db.prepare(`SELECT ${USER_COLS} FROM users WHERE id = ?`).get(id) || null; }
 
 // ── Сессии (в базе — переживают перезапуск сервера) ──
@@ -332,5 +348,5 @@ function shieldAdd(email, n) {
   return { user: db.prepare(`SELECT ${USER_COLS} FROM users WHERE id = ?`).get(u.id), info: shieldInfo(u) };
 }
 
-module.exports = { issueTempPassword, changePassword, makeVerifyToken, confirmEmail, setNews, userById, funPassword, normEmail,
+module.exports = { unsubSig, unsubscribe, db, issueTempPassword, changePassword, makeVerifyToken, confirmEmail, setNews, userById, funPassword, normEmail,
   shieldInfo, useShield, shieldAdd, register, login, logout, userByToken, tokenFromReq, rename, setAvatar, listAvatars, setBio, isVip, vipAdd, vipOff, vipList };

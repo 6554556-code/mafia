@@ -29,7 +29,7 @@ const SITE = () => process.env.PUBLIC_URL || "https://iplaymafia.com";
 const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
 
 // Общая обёртка письма: бумажная карточка в стиле игры. Таблицы и стили в строке — так письмо одинаково в Gmail, Mail.ru и Яндексе.
-function layout(title, bodyHtml) {
+function layout(title, bodyHtml, footExtra = "") {
   return `<!doctype html><html lang="ru"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>${esc(title)}</title></head>
 <body style="margin:0;padding:0;background:#0f1424">
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#0f1424;padding:24px 12px"><tr><td align="center">
@@ -38,17 +38,17 @@ function layout(title, bodyHtml) {
 <tr><td style="padding:6px 22px 22px;font-family:Arial,Helvetica,sans-serif;font-size:15px;line-height:1.55;color:#2c2c28">${bodyHtml}</td></tr>
 <tr><td style="padding:12px 22px;border-top:2px dashed #e0dccd;font-family:Arial,Helvetica,sans-serif;font-size:12px;line-height:1.5;color:#7a7a70;text-align:center">
 Мафия с ИИ · <a href="${SITE()}" style="color:#b5352c">iplaymafia.com</a><br>Письмо отправлено автоматически, отвечать на него не нужно.<br>
-Вопросы — Telegram <a href="https://t.me/cecTpyxa" style="color:#b5352c">@cecTpyxa</a> или ebookee.app@gmail.com</td></tr>
+Вопросы — Telegram <a href="https://t.me/cecTpyxa" style="color:#b5352c">@cecTpyxa</a> или ebookee.app@gmail.com${footExtra}</td></tr>
 </table></td></tr></table></body></html>`;
 }
 const button = (href, text) => `<table role="presentation" cellpadding="0" cellspacing="0" style="margin:18px auto"><tr><td style="background:#b5352c;border:2px solid #2c2c28">
 <a href="${href}" style="display:inline-block;padding:12px 26px;font-family:Arial,Helvetica,sans-serif;font-size:16px;font-weight:bold;color:#ffffff;text-decoration:none">${text}</a></td></tr></table>`;
 
-async function send(to, subject, html, text) {
+async function send(to, subject, html, text, headers) {
   const t = getTransport();
   if (!t) throw new Error("почта не настроена (SMTP_* в ~/.env)");
   const from = process.env.MAIL_FROM || `"Мафия с ИИ" <${process.env.SMTP_USER}>`;
-  const info = await t.sendMail({ from, to, subject, html, text });
+  const info = await t.sendMail({ from, to, subject, html, text, headers });
   console.log(`📧 письмо «${subject}» → ${to}`);
   return info;
 }
@@ -80,7 +80,34 @@ ${button(SITE() + "/auth.html", "Войти в игру")}
   return send(user.email, subject, html, text);
 }
 
-module.exports = { enabled, sendVerify, sendNewPassword, send };
+// ── 3. Рассылка: VIP доступен (РЕКЛАМА — только тем, кто дал согласие на новости; со ссылкой «отписаться») ──
+function sendPromoVip(user, unsubLink) {
+  const subject = "👑 VIP доступен от 59 ₽";
+  const html = layout(subject, `
+<p style="margin:0 0 12px">Привет, <b>${esc(user.name)}</b>!</p>
+<p style="margin:0 0 12px">Ты просил(а) держать в курсе — держим. <b>VIP доступен от 59 ₽:</b> стол до 12 игроков, путана и бомж, выбор роли, глаз бога с первой минуты и партии без лимита.</p>
+<p style="margin:0 0 4px">Загляни в 🛒 Ларёк — он в верхнем меню игры.</p>
+${button(SITE(), "Играть")}`,
+  `<br><br>Ты получил(а) это письмо, потому что при регистрации согласился(лась) получать новости и акции.<br><a href="${unsubLink}" style="color:#7a7a70">Отписаться от новостей</a>`);
+  const text = `Привет, ${user.name}!\n\nТы просил(а) держать в курсе — держим. VIP доступен от 59 ₽: стол до 12 игроков, путана и бомж, выбор роли, глаз бога с первой минуты и партии без лимита.\nЗагляни в Ларёк — он в верхнем меню игры.\n\nИграть: ${SITE()}\n\nОтписаться от новостей: ${unsubLink}`;
+  return send(user.email, subject, html, text, { "List-Unsubscribe": `<${unsubLink}>`, "List-Unsubscribe-Post": "List-Unsubscribe=One-Click" });
+}
+
+// ── 4. Служебное: переезд и обновление условий (всем, кто НЕ давал согласие на новости — без рекламы) ──
+function sendServiceMove(user, link) {
+  const subject = "Мафия переехала: iplaymafia.com 🏙";
+  const html = layout(subject, `
+<p style="margin:0 0 12px">Привет, <b>${esc(user.name)}</b>! Пара новостей из нашего города.</p>
+<p style="margin:0 0 10px">🏙 <b>Мы переехали</b> на новый адрес — <a href="${SITE()}" style="color:#b5352c">iplaymafia.com</a>. Старый тоже работает и сам перекинет куда надо.</p>
+<p style="margin:0 0 10px">📜 <b>Обновили правила и документы:</b> в игре появились платные функции, бесплатная игра остаётся — 5 партий в день.</p>
+<p style="margin:0 0 10px">📧 <b>Подтверди почту</b>${user.email_ok ? " — уже сделано, спасибо!" : ", чтобы не потерять доступ к аккаунту: на неё придёт новый пароль, если забудешь старый."}</p>
+<p style="margin:0 0 4px">🎁 Хочешь узнавать о новых ролях, подарках и розыгрышах — включи галочку в ⚙️ Настройках игры.</p>
+${button(link, user.email_ok ? "Играть" : "Подтвердить почту и играть")}`);
+  const text = `Привет, ${user.name}! Пара новостей из нашего города.\n\n— Мы переехали на новый адрес: ${SITE()} (старый тоже работает).\n— Обновили правила и документы: в игре появились платные функции, бесплатная игра остаётся — 5 партий в день.\n— ${user.email_ok ? "Почта подтверждена — спасибо!" : "Подтверди почту, чтобы не потерять доступ к аккаунту."}\n— Хочешь узнавать о новых ролях, подарках и розыгрышах — включи галочку в Настройках игры.\n\n${user.email_ok ? "Играть" : "Подтвердить почту и играть"}: ${link}`;
+  return send(user.email, subject, html, text);
+}
+
+module.exports = { enabled, sendVerify, sendNewPassword, sendPromoVip, sendServiceMove, send };
 
 // ── Запуск с сервера: node mail.js test почта | node mail.js reset почта ──
 if (require.main === module) {
