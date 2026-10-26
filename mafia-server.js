@@ -637,7 +637,8 @@ function rules() {
     "ПОБЕДА: деревня — когда мертвы вся мафия и маньяк. Мафия — когда её не меньше, чем остальных. Маньяк — когда остался последним.",
     `ЛОГИКА НОЧИ: пуль за ночь — одна от мафии (если жива) и одна от маньяка (если жив). Пуля не убила, если: доктор лечил цель${st.putana ? " / путана была у стрелка (у любого мафиози — значит, у всей мафии)" : ""} / у цели щит / обе пули в одного. Погиб мафиози — его убил маньяк. Погиб маньяк — его убила мафия. Два трупа — никого не остановили.`,
     `ЧЕСТНОСТЬ: деревня (${town}) НИКОГДА не врёт о своей роли. Пойманный на лжи о роли — злодей. Злодеи врут.`,
-    "ТАЙНОЕ: первыми в личку пишут только комиссар и доктор, ответить может любой. Ночные ходы и шёпот видят только участники — «я проверил», «мне шепнули», «держала», «видел у дома» не выдумка, а тайное знание.",
+    "НОЧЬ ОДНОВРЕМЕННА: выстрелы, лечение, визит путаны, проверка и шёпот комиссара, дежурство бомжа — всё случается ДО рассвета. Убитый этой ночью успел сделать свой ход и шепнуть: «от трупа шёпота не бывает», «путана мертва — значит, не приходила» — неверно.",
+    "ТАЙНОЕ: первыми в личку пишут только комиссар и доктор, ответить может любой. Ночные ходы и шёпот видят только участники — «я проверил», «мне шепнули», «держала», «видел у дома» не выдумка, а тайное знание. «Ко мне приходила путана», «меня держали» — это слова ГОСТЯ путаны, а не заявление, что он путана.",
     "ЩИТ: у живого игрока может быть защита — «выстрел был, а трупа нет» или «казнь не состоялась». О роли щит ничего не говорит.",
     "Правила и разбор ведущего знают ВСЕ за столом: пересказ правил или фактов — не улика.",
   ].filter(Boolean).join("\n");
@@ -826,7 +827,7 @@ const IMPL_VERB = {
   komissar: /^провер(ил|ила|ял|яла)$/,
   putana: /^(за)?держал(а)?$|^навести(л|ла)$|^навеща(л|ла)$/,
   doctor: /^(вы|под)?лечил(а)?$|^откачал(а)?$/,
-  bomzh: /^дежурил(а)?$|^сторожил(а)?$/,
+  bomzh: /^дежурил(а)?$|^сторожил(а)?$|^следил(а)?$/,
 };
 const IMPL_STOP = /^(не|думаю|считаю|знаю|слышал|слышала|уверен|уверена|вижу|комиссар|комиссарша|доктор|врач|путана|бомж|ты|он|она|кто)$/;
 function implicitClaim(low) {
@@ -856,8 +857,8 @@ function claims() {
     const role = m ? CLAIM_ROLE[m[1]] : implicitClaim(low);
     if (!role) continue;
     const key = who + "|" + role, quote = { day, text: clip(txt, 130) };
-    if (at.has(key)) { const c = at.get(key); c.last = quote; if (m) c.open = true; continue; }
-    const c = { name: who, role, day, open: !!m, last: quote };
+    if (at.has(key)) { const c = at.get(key); c.last = quote; c.quotes.push(quote); if (m) c.open = true; continue; }
+    const c = { name: who, role, day, open: !!m, last: quote, quotes: [quote] };
     at.set(key, c); list.push(c);
   }
   return list;
@@ -879,7 +880,7 @@ function claimVerdicts() {
   const res = cl.map((c) => {
     const p = byName(c.name), v = { c, liar: false, dup: false, notes: [] };
     if (!st[c.role]) { v.liar = true; v.notes.push(`⚠ ЛОЖЬ: роли «${roleName(c.role)}» за этим столом нет → ${c.name} — злодей`); }
-    else if (p && !p.alive) v.notes.push(p.revealed === c.role ? "вскрытие подтвердило" : `вскрытие: ${roleName(p.revealed).toLowerCase()} — лгал(а)`);
+    else if (p && !p.alive) v.notes.push(p.revealed === c.role ? `вскрытие ПОДТВЕРДИЛО — значит, его/её ночные находки правда${c.role === "komissar" ? " (проверки — точные роли)" : ""}` : `вскрытие: ${roleName(p.revealed).toLowerCase()} — лгал(а)`);
     else {
       const rv = revealed(c.role);
       if (rv.length >= st[c.role]) {
@@ -945,7 +946,12 @@ function hostBlock() {
   if (cv.length) {
     L.push("ЗАЯВЛЕНИЯ О РОЛЯХ:");
     cv.forEach((v) => {
-      const c = v.c, said = `«${c.last.text}»${c.last.day !== c.day ? ` (день ${c.last.day})` : ""}`;
+      const c = v.c, p = byName(c.name);
+      // подтверждённый вскрытием — показываем его слова о других игроках (до трёх), чтобы ранние проверки не терялись
+      const others = G.players.filter((x) => x.name !== c.name).map((x) => nameKey(x.name)).filter((k) => k.length >= 3);
+      const about = p && !p.alive && p.revealed === c.role
+        ? c.quotes.filter((q) => others.some((k) => q.text.toLowerCase().includes(k))).filter((q, i, a) => a.findIndex((z) => z.text === q.text) === i).slice(-3) : [];
+      const said = about.length > 1 ? about.map((q) => `«${q.text}» (день ${q.day})`).join("; ") : `«${c.last.text}»${c.last.day !== c.day ? ` (день ${c.last.day})` : ""}`;
       L.push(`• ${c.name} — ${c.open ? "назвал(ась)" : "по сути назвал(ась) себя (описал(а) свой ночной ход)"} ${CLAIM_WORD[c.role]}, день ${c.day}: ${said}${v.notes.length ? " — " + v.notes.join("; ") : ""}`);
     });
   } else L.push("Заявлений о ролях пока не было.");
