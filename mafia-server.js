@@ -1560,6 +1560,32 @@ async function announceDead() {
   G.lastDead = [];
 }
 
+// ── Эхо: ИИ почти дословно повторил то, что сегодня уже звучало, — такой реплики нет, он молчит ──
+// Сравниваем по «основам» слов (без окончаний: «стояла/стояли» → «стоя»), без имён игроков и служебных слов:
+// совпала цепочка из 3 подряд основ или больше половины слов — это эхо.
+const ECHO_STOP = new Set("так как про что это ты вы мы он она они его её ему ей нам вам тут там вот ещё уже всё все или для без при над под той ту тот эта эти".split(" "));
+const stem = (w) => (w.length > 5 ? w.slice(0, w.length - 2) : w.length > 3 ? w.slice(0, w.length - 1) : w);
+function stems(text) {
+  const names = new Set(G.players.flatMap((x) => x.name.toLowerCase().split(/[^а-яёa-z0-9]+/)));
+  return String(text).toLowerCase().split(/[^а-яёa-z0-9]+/).filter((w) => w.length >= 3 && !names.has(w) && !ECHO_STOP.has(w)).map(stem);
+}
+function todaySaid() {
+  let start = 0; G.log.forEach((e, i) => { if (e.kind === "narrator" && /День \d+/.test(e.text)) start = i; });
+  return G.log.slice(start).filter((e) => e.kind === "say").map((e) => e.text);
+}
+function isEcho(p, text) {
+  if (NIGHT_TOWN.includes(p.role) && new RegExp(roleName(p.role).slice(0, 5), "i").test(text)) return false;   // своя роль с находкой — не глушим
+  const a = stems(text); if (a.length < 3) return false;
+  const tri = (w) => new Set(w.slice(0, -2).map((x, i) => x + " " + w[i + 1] + " " + w[i + 2]));
+  const ta = tri(a), sa = new Set(a);
+  return todaySaid().some((prev) => {
+    const b = stems(prev); if (b.length < 3) return false;
+    if ([...tri(b)].some((t) => ta.has(t))) return true;
+    const sb = new Set(b), common = [...sa].filter((x) => sb.has(x)).length;
+    return common / Math.min(sa.size, sb.size) > 0.5;
+  });
+}
+
 async function doDiscussion() {
   setPhase("day");                                     // обсуждение — щит можно поставить до начала голосования
   for (let round = 1; round <= 2; round++) {
@@ -1574,7 +1600,9 @@ async function doDiscussion() {
       const plan = await aiPlan(p, round);
       secretThought(p.name, plan);
       const msg = await aiSpeak(p, round, plan);
-      if (/^\s*молч/i.test(msg)) silence(p); else say(p, msg);
+      if (/^\s*молч/i.test(msg)) silence(p);
+      else if (isEcho(p, msg)) { secretAct(`🔁 ${p.name} повторил(а) сказанное — промолчит: «${clip(msg, 90)}»`); silence(p); }
+      else say(p, msg);
       await sleep(PACING_MS);
     }
   }
