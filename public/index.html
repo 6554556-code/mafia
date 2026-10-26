@@ -133,6 +133,8 @@
   .setmsg{margin-top:10px;font-size:13px;min-height:1.1em}
   .setmsg.err{color:var(--mafia-tx)}
   .setmsg.ok{color:var(--good)}
+  .acct-top{margin:-4px 0 14px;padding:8px 10px;font-size:13px;line-height:1.5;text-align:center;background:var(--paper-2);border:2px solid var(--line)}
+  .acct-top.vip{background:#fff3c4;border-color:#d4bd4c;color:#6b5410}
   .soon{margin-top:14px;padding-top:12px;border-top:1px dashed var(--ink-soft);font-size:12px;color:var(--ink-soft);line-height:1.8}
   .ava-section{margin-top:12px}
   .bio-section{margin-top:14px;padding-top:10px;border-top:1px dashed var(--ink-soft)}
@@ -1117,10 +1119,11 @@ function openSettings(){
     document.getElementById('newsChk').checked = !!a.news;
     ['accMailMsg','pwMsg'].forEach(id=>{ const m=document.getElementById(id); m.className='setmsg'; m.textContent=''; });
     document.getElementById('pwOld').value=''; document.getElementById('pwNew').value='';
-    document.getElementById('acctInfo').innerHTML = (a.vip
-      ? '👑 VIP до '+ruDate(a.vipUntil)
-      : `Бесплатный аккаунт · сегодня сыграно ${Math.min(a.played||0,a.limit||5)} из ${a.limit||5} партий`)
-      + ` · <span class="buy-link" onclick="closeSettings();openShop()">🛒 Ларёк</span>`;
+    const ai=document.getElementById('acctInfo');
+    ai.classList.toggle('vip',!!a.vip);
+    ai.innerHTML = a.vip
+      ? `👑 <b>VIP</b> до ${ruDate(a.vipUntil)} · партии без лимита`
+      : `Бесплатный аккаунт · сегодня сыграно <b>${Math.min(a.played||0,a.limit||5)} из ${a.limit||5}</b> партий`;
     loadAvatars(u.avatar, !!a.vip); } }).catch(()=>{});
   document.getElementById('nickInput').focus();
 }
@@ -1396,6 +1399,7 @@ connect();
 <div class="modal pixel" id="settings" style="display:none" onclick="if(event.target===this)closeSettings()">
   <div class="modal-card">
     <div class="modal-head"><span>⚙️ Настройки</span><span class="x" onclick="closeSettings()">✕</span></div>
+    <div class="acct-top" id="acctInfo">…</div>
     <label for="nickInput">Игровой ник</label>
     <input id="nickInput" maxlength="16" autocomplete="off">
     <button class="save" onclick="saveNick()">Сохранить ник</button>
@@ -1428,7 +1432,6 @@ connect();
       <label>Выбери своё лицо 👇</label>
       <div id="avaGrid"></div>
     </div>
-    <div class="soon" id="acctInfo">…</div>
   </div>
 </div>
 </body>
