@@ -2,7 +2,7 @@
 //
 // Отправляем через почтовый ящик на хостинге (noreply@iplaymafia.com). Настройки — только в ~/.env:
 //   SMTP_HOST=mail.iplaymafia.com   SMTP_PORT=465   SMTP_USER=noreply@iplaymafia.com   SMTP_PASS=…
-//   MAIL_FROM — от кого (по умолчанию «Мафия с ИИ» <SMTP_USER>)
+//   MAIL_FROM — от кого (по умолчанию «Игра Мафия» <SMTP_USER>)
 //   SMTP_INSECURE=1 — не проверять сертификат почтового сервера (только если хостинг отдаёт сертификат на другое имя)
 //
 // Проверка с сервера:  node mail.js test почта     — пробное письмо
@@ -37,7 +37,7 @@ function layout(title, bodyHtml, footExtra = "") {
 <tr><td style="padding:22px 22px 6px;text-align:center;font-family:'Courier New',monospace;font-size:26px;font-weight:bold;letter-spacing:3px;color:#b5352c">МАФИЯ</td></tr>
 <tr><td style="padding:6px 22px 22px;font-family:Arial,Helvetica,sans-serif;font-size:15px;line-height:1.55;color:#2c2c28">${bodyHtml}</td></tr>
 <tr><td style="padding:12px 22px;border-top:2px dashed #e0dccd;font-family:Arial,Helvetica,sans-serif;font-size:12px;line-height:1.5;color:#7a7a70;text-align:center">
-Мафия с ИИ · <a href="${SITE()}" style="color:#b5352c">iplaymafia.com</a><br>Письмо отправлено автоматически, отвечать на него не нужно.<br>
+Игра Мафия · <a href="${SITE()}" style="color:#b5352c">iplaymafia.com</a><br>Письмо отправлено автоматически, отвечать на него не нужно.<br>
 Вопросы — Telegram <a href="https://t.me/cecTpyxa" style="color:#b5352c">@cecTpyxa</a> или ebookee.app@gmail.com${footExtra}</td></tr>
 </table></td></tr></table></body></html>`;
 }
@@ -47,7 +47,7 @@ const button = (href, text) => `<table role="presentation" cellpadding="0" cells
 async function send(to, subject, html, text, headers) {
   const t = getTransport();
   if (!t) throw new Error("почта не настроена (SMTP_* в ~/.env)");
-  const from = process.env.MAIL_FROM || `"Мафия с ИИ" <${process.env.SMTP_USER}>`;
+  const from = process.env.MAIL_FROM || `"Игра Мафия" <${process.env.SMTP_USER}>`;
   const info = await t.sendMail({ from, to, subject, html, text, headers });
   console.log(`📧 письмо «${subject}» → ${to}`);
   return info;
@@ -62,7 +62,7 @@ function sendVerify(user, link) {
 <p style="margin:0 0 4px">Подтверди, что почта твоя: без этого после первой партии дальше не пустим. На эту же почту придут чеки и новый пароль, если вдруг забудешь старый.</p>
 ${button(link, "Подтвердить почту")}
 <p style="margin:0;font-size:12px;color:#7a7a70">Кнопка не нажимается? Скопируй ссылку в браузер:<br><span style="word-break:break-all">${esc(link)}</span><br>Ссылка действует 7 дней. Не регистрировался — просто удали письмо.</p>`);
-  const text = `Привет, ${user.name}! Добро пожаловать за стол.\n\nПодтверди почту — без этого после первой партии дальше не пустим:\n${link}\n\nСсылка действует 7 дней. Не регистрировался — просто удали письмо.\n\nМафия с ИИ · iplaymafia.com`;
+  const text = `Привет, ${user.name}! Добро пожаловать за стол.\n\nПодтверди почту — без этого после первой партии дальше не пустим:\n${link}\n\nСсылка действует 7 дней. Не регистрировался — просто удали письмо.\n\nИгра Мафия · iplaymafia.com`;
   return send(user.email, subject, html, text);
 }
 
@@ -76,7 +76,7 @@ function sendNewPassword(user, password) {
 ${button(SITE() + "/auth.html", "Войти в игру")}
 <p style="margin:0 0 8px;font-size:13px">Пароль действует 24 часа. Войдёшь с ним — он станет твоим основным. Сменить на свой можно в ⚙️ Настройках.</p>
 <p style="margin:0;font-size:12px;color:#7a7a70">Не просил новый пароль? Ничего не делай: старый пароль работает как прежде.</p>`);
-  const text = `Привет, ${user.name}!\n\nТвой новый пароль: ${password}\n\nВойти: ${SITE()}/auth.html\nПароль действует 24 часа. Войдёшь с ним — он станет основным. Сменить можно в Настройках.\n\nНе просил новый пароль? Ничего не делай: старый работает как прежде.\n\nМафия с ИИ · iplaymafia.com`;
+  const text = `Привет, ${user.name}!\n\nТвой новый пароль: ${password}\n\nВойти: ${SITE()}/auth.html\nПароль действует 24 часа. Войдёшь с ним — он станет основным. Сменить можно в Настройках.\n\nНе просил новый пароль? Ничего не делай: старый работает как прежде.\n\nИгра Мафия · iplaymafia.com`;
   return send(user.email, subject, html, text);
 }
 
