@@ -1029,7 +1029,8 @@ function handle(e){
       add(el("plaque check",`<div class="who">🌹 Твой визит</div><div>${esc(e.text.replace(/^🌹\s*/,""))}</div>`));break;
     case "watch_result":{
       const who=(e.seen||[]).length ? e.seen.map(x=>`<b style="color:${colorOf(x.name)}">${esc(x.name)}</b> ${esc(x.act)}`).join(", ")+"." : "никто не приходил.";
-      add(el("plaque check",`<div class="who">🍾 Твоё дежурство</div><div>У дома <b>${esc(e.name)}</b>: ${who}</div>`));break;}
+      const out=e.left===undefined?'':(e.left?`<div>🚪 Сам(а) <b>${esc(e.name)}</b> ночью <b>выходил(а)</b> из дома.</div>`:`<div>🏠 Сам(а) <b>${esc(e.name)}</b> из дома не выходил(а).</div>`);
+      add(el("plaque check",`<div class="who">🍾 Твоё дежурство</div><div>У дома <b>${esc(e.name)}</b>: ${who}</div>${out}`));break;}
     case "note":
       add(el("narr",esc(e.text)));break;
     case "roster":
