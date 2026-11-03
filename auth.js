@@ -222,6 +222,27 @@ function unsubscribe(userId, sig) {
   db.prepare("UPDATE users SET news = 0 WHERE id = ?").run(userId);
   return { ok: true };
 }
+// ── Подарок по ссылке из письма: одноразовый, личный, со сроком. В базе — только отпечаток ключа. ──
+db.exec(`CREATE TABLE IF NOT EXISTS gift_tokens (
+  hash TEXT PRIMARY KEY, user_id INTEGER NOT NULL, campaign TEXT NOT NULL, vip_ms INTEGER NOT NULL,
+  expires INTEGER NOT NULL, used INTEGER)`);
+function makeGift(userId, campaign, vipMs, expires) {
+  const token = crypto.randomBytes(24).toString("base64url");
+  db.prepare("INSERT INTO gift_tokens (hash, user_id, campaign, vip_ms, expires) VALUES (?, ?, ?, ?, ?)").run(sha(token), userId, campaign, vipMs, expires);
+  return token;
+}
+// → { ok, userId, vipUntil } | { error: "used" | "expired" | "bad" }
+function redeemGift(token) {
+  const g = db.prepare("SELECT * FROM gift_tokens WHERE hash = ?").get(sha(String(token || "")));
+  if (!g) return { error: "bad" };
+  if (g.used) return { error: "used", userId: g.user_id };
+  if (g.expires < Date.now()) return { error: "expired", userId: g.user_id };
+  const r = db.prepare("UPDATE gift_tokens SET used = ? WHERE hash = ? AND used IS NULL").run(Date.now(), g.hash);
+  if (!r.changes) return { error: "used", userId: g.user_id };
+  db.prepare("UPDATE users SET vip_until = max(COALESCE(vip_until, 0), ?) + ? WHERE id = ?").run(Date.now(), g.vip_ms, g.user_id);
+  const u = db.prepare("SELECT vip_until FROM users WHERE id = ?").get(g.user_id);
+  return { ok: true, userId: g.user_id, vipUntil: u && u.vip_until };
+}
 function userById(id) { return db.prepare(`SELECT ${USER_COLS} FROM users WHERE id = ?`).get(id) || null; }
 
 // ── Сессии (в базе — переживают перезапуск сервера) ──
@@ -348,5 +369,5 @@ function shieldAdd(email, n) {
   return { user: db.prepare(`SELECT ${USER_COLS} FROM users WHERE id = ?`).get(u.id), info: shieldInfo(u) };
 }
 
-module.exports = { unsubSig, unsubscribe, db, issueTempPassword, changePassword, makeVerifyToken, confirmEmail, setNews, userById, funPassword, normEmail,
+module.exports = { makeGift, redeemGift, unsubSig, unsubscribe, db, issueTempPassword, changePassword, makeVerifyToken, confirmEmail, setNews, userById, funPassword, normEmail,
   shieldInfo, useShield, shieldAdd, register, login, logout, userByToken, tokenFromReq, rename, setAvatar, listAvatars, setBio, isVip, vipAdd, vipOff, vipList };

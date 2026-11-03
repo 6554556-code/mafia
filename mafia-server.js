@@ -214,6 +214,15 @@ function startWeb() {
 
   // ── Почта и пароль ──
   // «Подтверди почту»: ссылка из письма. Подтвердили — в игру с плашкой «почта подтверждена».
+  // Подарок из письма: зачисляем ВИП владельцу ссылки; вошёл — в игру с плашкой, не вошёл — на вход с плашкой
+  app.get("/gift", (req, res) => {
+    const r = auth.redeemGift(String(req.query.t || ""));
+    const me = auth.userByToken(auth.tokenFromReq(req));
+    const code = r.ok ? "1" : r.error;
+    if (r.ok) console.log(`🎁 подарок: ВИП на 24 часа → игрок #${r.userId}`);
+    if (me && (!r.userId || me.id === r.userId)) return res.redirect("/?gift=" + code);
+    res.redirect("/auth.html?gift=" + code);
+  });
   app.get("/verify", (req, res) => {
     const r = auth.confirmEmail(String(req.query.t || ""));
     res.redirect(r.error ? "/?verified=0" : "/?verified=1");

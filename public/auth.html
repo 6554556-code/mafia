@@ -327,6 +327,11 @@
   }
   // прямая ссылка на правила: /auth.html#rules (из раздела «Документы»)
   if (location.hash === "#rules") openSheet("rules");
+  // пришёл по ссылке-подарку, но не вошёл: ВИП уже на аккаунте — просим войти
+  { const g = new URLSearchParams(location.search).get("gift");
+    if (g) { history.replaceState(null, "", location.pathname); openSheet("auth"); setMode("login");
+      msg.textContent = g === "1" ? "🎁 ВИП на 24 часа уже на твоём аккаунте — войди и играй!" : g === "used" ? "🎁 Подарок уже забран — ВИП на твоём аккаунте. Войди и играй!" : g === "expired" ? "⏳ Акция закончилась — но ВИП можно взять в Ларьке от 59 ₽." : "Ссылка повреждена.";
+      msg.className = "msg " + (g === "1" || g === "used" ? "ok" : "err"); } }
   document.addEventListener("keydown", (e) => {
     if(e.key === "Escape"){ if($("sheet-doc").classList.contains("on")) closeDoc(); else closeSheets(); }
     if(e.key === "Enter" && $("sheet-auth").classList.contains("on")) go();

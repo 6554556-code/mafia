@@ -1231,6 +1231,15 @@ async function checkPaid(n=0){
   if(p) toast('⏳ Оплата ещё обрабатывается. Как только ЮKassa подтвердит — VIP или щиты придут сами. Если не пришли за час — напиши нам: ebookee.app@gmail.com',12000);
 }
 { const q=new URLSearchParams(location.search);
+  if(q.has('gift')){
+    history.replaceState(null,'',location.pathname);
+    const g=q.get('gift');
+    setTimeout(()=>{
+      if(g==='1'){ fetch('/me').then(r=>r.json()).then(d=>{ const a=d&&d.account; if(a){ setVipBadge(a.vip?(a.vipUntil||1):null);
+        toast(`🎁 ВИП твой до ${ruDate(a.vipUntil)} — азартной охоты!`,9000); if(document.getElementById('setupBox')) showSetup(); } }).catch(()=>{}); }
+      else toast(g==='expired'?'⏳ Акция уже закончилась — но ВИП можно взять в 🛒 Ларьке от 59 ₽.':g==='used'?'🎁 Этот подарок уже забран — ВИП на твоём аккаунте.':'Ссылка повреждена.',8000,g==='expired'?()=>openShop():null);
+    },700);
+  }
   if(q.has('verified')||q.has('newpass')){
     history.replaceState(null,'',location.pathname);
     setTimeout(()=>{

@@ -31,12 +31,31 @@ const CAMPAIGNS = {
     who: "users.news = 1",
     send: (u) => mail.sendPromoVip(u, `${SITE}/unsub?u=${u.id}&s=${auth.unsubSig(u.id)}`),
   },
+  // «Дарим ВИП на 24 часа». Срок акции общий: ровно 3 дня с первого запуска кампании (запоминается в базе).
+  comeback: {
+    who: "users.news = 1",
+    send: (u) => {
+      const ends = promoEnds("comeback", 3 * 24 * 3600e3);
+      const gift = `${SITE}/gift?t=${auth.makeGift(u.id, "comeback", 24 * 3600e3, ends)}`;
+      return mail.sendComeback(u, gift, `${SITE}/unsub?u=${u.id}&s=${auth.unsubSig(u.id)}`);
+    },
+  },
   move: {
     who: "users.news = 0",
     send: (u) => mail.sendServiceMove(u, u.email_ok ? SITE : `${SITE}/verify?t=${auth.makeVerifyToken(u.id)}`),
   },
 };
 
+// срок акции: запоминается при первой отправке (проба --test срок не запускает)
+function promoEnds(name, ms) {
+  db.exec("CREATE TABLE IF NOT EXISTS app_kv (k TEXT PRIMARY KEY, v TEXT NOT NULL)");
+  const k = "promo_ends:" + name, row = db.prepare("SELECT v FROM app_kv WHERE k = ?").get(k);
+  if (row) return Number(row.v);
+  if (TESTING) return Date.now() + ms;
+  db.prepare("INSERT INTO app_kv (k, v) VALUES (?, ?)").run(k, String(Date.now() + ms));
+  return Date.now() + ms;
+}
+let TESTING = false;
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const now = () => new Intl.DateTimeFormat("ru-RU", { timeZone: "Europe/Moscow", hour: "2-digit", minute: "2-digit", second: "2-digit" }).format(Date.now());
 // временный отказ сервера (лимит, «попробуй позже») — ждём и повторяем; постоянный (нет такого ящика) — пропускаем
@@ -49,6 +68,7 @@ const temporary = (e) => /^4\d\d/.test(String(e.responseCode || "")) || /ETIMEDO
   if (!mail.enabled()) return console.log("Почта не настроена (SMTP_* в ~/.env)");
 
   if (flag === "--test") {
+    TESTING = true;
     const u = db.prepare("SELECT id, email, name, email_ok FROM users WHERE email = ?").get(auth.normEmail(arg));
     if (!u) return console.log("Нет игрока с такой почтой: " + arg + "\nПробное письмо уходит только на почту аккаунта в игре.");
     await C.send(u);

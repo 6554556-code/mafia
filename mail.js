@@ -107,7 +107,24 @@ ${button(link, user.email_ok ? "Играть" : "Подтвердить почт
   return send(user.email, subject, html, text);
 }
 
-module.exports = { enabled, sendVerify, sendNewPassword, sendPromoVip, sendServiceMove, send };
+// ── 5. Рассылка «Дарим ВИП на 24 часа» (РЕКЛАМА — только с согласием на новости; личная ссылка-подарок на 3 дня) ──
+function sendComeback(user, giftLink, unsubLink) {
+  const subject = "Дарим ВИП на 24 часа. Акция действует ровно 3 дня!";
+  const li = (t) => `<p style="margin:0 0 8px">${t}</p>`;
+  const html = layout(subject, `
+<p style="margin:0 0 12px">Привет, <b>${esc(user.name)}</b>!</p>
+<p style="margin:0 0 12px">Пока тебя не было, в городе многое изменилось:</p>
+${li("🕵️ <b>ИИ научились ловить лжецов.</b> Назовёшься комиссаром, а комиссар уже вскрыт — вычислят.")}
+${li("🍾 <b>Бомж видит, кто выходил ночью из дома.</b> Даже мафию, которая идёт на сходку.")}
+${li("🔁 <b>Персонажи меньше болтают хором</b> и больше думают своей головой.")}
+<p style="margin:14px 0 4px;padding:12px;background:#fff3c4;border:2px dashed #d4bd4c;text-align:center">🎁 <b>Дарим тебе ВИП на 24 часа:</b> стол до 12 игроков, путана и бомж, выбор роли, глаз бога и партии без лимита.<br><span style="font-size:13px;color:#6b5410">Нажми кнопку — ВИП сразу появится на твоём аккаунте. Ссылка действует ровно 3 дня.</span></p>
+${button(giftLink, "Забрать ВИП и играть")}`,
+  `<br><br>Ты получил(а) это письмо, потому что при регистрации согласился(лась) получать новости и акции.<br><a href="${unsubLink}" style="color:#7a7a70">Отписаться от новостей</a>`);
+  const text = `Привет, ${user.name}!\n\nПока тебя не было, в городе многое изменилось:\n— ИИ научились ловить лжецов.\n— Бомж видит, кто выходил ночью из дома.\n— Персонажи меньше болтают хором.\n\nДарим тебе ВИП на 24 часа! Забрать (ссылка действует ровно 3 дня): ${giftLink}\n\nОтписаться от новостей: ${unsubLink}`;
+  return send(user.email, subject, html, text, { "List-Unsubscribe": `<${unsubLink}>`, "List-Unsubscribe-Post": "List-Unsubscribe=One-Click" });
+}
+
+module.exports = { enabled, sendVerify, sendNewPassword, sendPromoVip, sendServiceMove, sendComeback, send };
 
 // ── Запуск с сервера: node mail.js test почта | node mail.js reset почта ──
 if (require.main === module) {
