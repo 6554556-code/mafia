@@ -15,7 +15,8 @@ const HUMAN_ROLE = process.env.HUMAN_ROLE || null;   // какую роль да
 const PACING_MS = Number(process.env.PACING_MS ?? 10000);         // пауза между ходами в мс (0 = максимально быстро)
 const FREE_GAMES = Number(process.env.FREE_GAMES ?? 5);
 const IP_FREE_GAMES = Number(process.env.IP_FREE_GAMES ?? 15);   // бесплатных партий в день с одного адреса — по всем аккаунтам вместе
-const VERIFY_AFTER = Number(process.env.VERIFY_AFTER ?? 1);      // после скольких доигранных партий просим подтвердить почту (VIP — не просим)
+// После скольких доигранных партий НЕ пускаем играть без подтверждённой почты. 0 = не блокируем никогда (письмо всё равно уходит при регистрации).
+const VERIFY_AFTER = Number(process.env.VERIFY_AFTER ?? 0);
 const SHIELDS_PER_GAME = 2;                                 // больше щитов за одну партию поставить нельзя   // сколько партий в сутки (по МСК) можно ДОИГРАТЬ без VIP
 const ATMO_TYPING_MS = Number(process.env.ATMO_TYPING_MS ?? 1100); // сколько «печатает…» рассказчик перед ночной/утренней строкой
 const TEMPERATURE = 0.9;     // «живость» речи
@@ -462,7 +463,7 @@ ${ok ? "<p>Готово — новостей и акций больше не п�
         return;                                      // соединение держим открытым: иначе браузер станет переподключаться каждые 3 с
       }
       // первая партия сыграна, а почта не подтверждена — просим подтвердить (письмо уходит само, не чаще раза в 10 минут)
-      if (!acct.vip && !me.email_ok && gamelog.finishedTotal(me.id) >= VERIFY_AFTER) {
+      if (VERIFY_AFTER > 0 && !acct.vip && !me.email_ok && gamelog.finishedTotal(me.id) >= VERIFY_AFTER) {
         const sent = sendVerifyMail(me, req, false);
         res.write(`data: ${JSON.stringify({ type: "verify", email: me.email, sent, mailOn: mail.enabled() })}\n\n`);
         return;
