@@ -279,7 +279,6 @@ ${ok ? "<p>Готово — новостей и акций больше не п�
   app.post("/pay/create", async (req, res) => {
     const u = auth.userByToken(auth.tokenFromReq(req));
     if (!u) return res.status(401).json({ error: "Войди в игру, чтобы купить" });
-    if (!u.email_ok) return res.status(403).json({ error: "Сначала подтверди почту: на неё придёт чек, а если забудешь пароль — новый. Письмо можно отправить в ⚙️ Настройках.", needVerify: true });
     const k = "pay:" + u.id;
     if (recent(k, 600e3).length >= 10) return res.status(429).json({ error: "Слишком много попыток оплаты. Подожди 10 минут." });
     hit(k);
