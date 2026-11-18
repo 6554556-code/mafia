@@ -7,6 +7,11 @@ iplaymafia.com {
 	reverse_proxy localhost:3000
 }
 
+# Приложение для App Store — отдельный проект mafia-app (папка /root/mafia-app, порт 3001)
+app.iplaymafia.com {
+	reverse_proxy localhost:3001
+}
+
 # www → без www (один адрес для поисковиков)
 www.iplaymafia.com {
 	redir https://iplaymafia.com{uri} permanent
