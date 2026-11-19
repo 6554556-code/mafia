@@ -2,7 +2,7 @@
 <html lang="ru">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
 <title>МАФИЯ · глаз бога</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -368,6 +368,9 @@
     padding:9px 11px;border:2px solid var(--line);background:#fff;color:var(--ink);
   }
   .inputrow input:focus{outline:none;box-shadow:inset 0 0 0 2px var(--think-br)}
+  /* iPhone приближает страницу при нажатии на поле со шрифтом меньше 16px и не отдаляет обратно.
+     Любой сенсорный экран, любой ширины: у больших iPhone (430–440px) старое правило «до 400px» не срабатывало */
+  @media (pointer:coarse){ input,textarea,select{font-size:16px !important} }
   .btn{font-family:var(--ui-font);font-weight:700;font-size:14px;
     padding:9px 16px;border:2px solid var(--line);cursor:pointer;white-space:nowrap}
   .btn.say{background:#f3d24e;color:#3a2e00}
@@ -430,8 +433,6 @@
     .feed{padding:2px 3px 2px 2px;gap:5px}
     .plaque{font-size:14px;padding:6px 8px}
     .inputbar{padding:6px}
-    /* iPhone увеличивает страницу при фокусе на поле с шрифтом < 16px — даём 16 */
-    .inputrow input,#voteReason,#whisperText,#replyText,.modal-card input{font-size:16px}
     .btn{padding:8px 12px}
   }
   /* телефон лёжа: экран низкий — лица в узкую полоску, чтобы чату осталось место */
