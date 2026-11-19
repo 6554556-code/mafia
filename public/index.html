@@ -649,6 +649,11 @@ function nameButtons(container, cands, onPick){
   });
 }
 let lastTurnKey=null;
+// Когда подходит твой ход — курсор в поле ставим сами только на компьютере.
+// На телефоне это выбрасывает клавиатуру без спроса (в приложении iPhone) и дёргает чат вверх, пока ты читаешь:
+// там поле просто появляется, клавиатура — когда тапнешь сама.
+const TOUCH=window.matchMedia&&matchMedia('(pointer:coarse)').matches;
+function autoFocus(el){ if(!TOUCH) el.focus(); }
 function showInput(e){
   const kind=e.kind;
   sayMode.style.display="none"; voteMode.style.display="none"; whisperMode.style.display="none"; replyMode.style.display="none";
@@ -657,7 +662,7 @@ function showInput(e){
     const key="say|"+dayLabel.textContent+"|"+e.round;     // тот же ход пришёл ещё раз (переподключение) — черновик не трогаем
     if(key!==lastTurnKey) sayText.value="";
     lastTurnKey=key;
-    sayMode.style.display=""; inputbar.classList.add('on'); sayText.focus();
+    sayMode.style.display=""; inputbar.classList.add('on'); autoFocus(sayText);
   } else if(kind==="vote" || kind==="check"){
     inputLbl.textContent = kind==="vote" ? "Ваш голос — кого казнить?" : "Ночь. Кого проверить? Узнаешь его роль";
     voteMode.style.display="";
@@ -729,7 +734,7 @@ function showInput(e){
     const toggle=()=>{ const on=whisperText.value.trim().length>0;
       whisperBtns.querySelectorAll('.votebtn').forEach(b=>b.classList.toggle('off',!on)); };
     whisperText.oninput=toggle; toggle();
-    inputbar.classList.add('on'); whisperText.focus();
+    inputbar.classList.add('on'); autoFocus(whisperText);
   } else if(kind==="mafia_say"){
     inputLbl.textContent=(e.many?"Сказать напарникам ":"Сказать напарнику ")+(e.to||"")+"? (жертва выбрана)";
     whisperMode.style.display="";
@@ -746,7 +751,7 @@ function showInput(e){
     const toggle=()=>{ const on=whisperText.value.trim().length>0;
       whisperBtns.querySelectorAll('.votebtn').forEach(b=>b.classList.toggle('off',!on)); };
     whisperText.oninput=toggle; toggle();
-    inputbar.classList.add('on'); whisperText.focus();
+    inputbar.classList.add('on'); autoFocus(whisperText);
   } else if(kind==="whisper"){
     inputLbl.textContent="Шепнуть кому-то? Напиши сообщение, потом выбери кому:";
     whisperText.placeholder="Что шепнуть (по желанию)…";
@@ -761,7 +766,7 @@ function showInput(e){
     const toggle=()=>{ const on=whisperText.value.trim().length>0;
       whisperBtns.querySelectorAll('.votebtn').forEach(b=>b.classList.toggle('off',!on)); };
     whisperText.oninput=toggle; toggle();
-    inputbar.classList.add('on'); whisperText.focus();
+    inputbar.classList.add('on'); autoFocus(whisperText);
   } else if(kind==="whisper_reply"){
     inputLbl.textContent="Тебе шепчут — ответь или промолчи";
     replyMode.style.display="";
@@ -773,7 +778,7 @@ function showInput(e){
     const bSil=document.createElement('button'); bSil.className='votebtn skip'; bSil.textContent='Промолчать';
     bSil.onclick=()=>{ hideInput(); sendAction({text:""}); };
     replyBtns.appendChild(bAns); replyBtns.appendChild(bSil);
-    inputbar.classList.add('on'); replyText.focus();
+    inputbar.classList.add('on'); autoFocus(replyText);
   }
 }
 function hideInput(){ inputbar.classList.remove('on'); }
