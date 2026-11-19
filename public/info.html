@@ -146,12 +146,13 @@
 
   /* ── окна: открываются по якорю (#prices и т.д.) — работают даже без скриптов,
         на них можно дать прямую ссылку, «Назад» в браузере закрывает ── */
-  .sheet{position:fixed;inset:0;z-index:10;display:none;align-items:center;justify-content:center;padding:14px}
+  .sheet{position:fixed;inset:0;z-index:10;display:none;align-items:center;justify-content:center;padding:14px;
+    padding-top:calc(14px + env(safe-area-inset-top,0px));padding-bottom:calc(14px + env(safe-area-inset-bottom,0px))}   /* iPhone: окно не лезет под часы и батарейку */
   .sheet:target{display:flex;animation:fade .18s ease-out}
   @keyframes fade{from{opacity:0}to{opacity:1}}
   .shade{position:absolute;inset:0;background:rgba(10,12,20,.62)}
   .card{
-    position:relative;width:100%;max-width:420px;max-height:calc(100dvh - 28px);overflow-y:auto;
+    position:relative;width:100%;max-width:420px;max-height:calc(100dvh - 28px - env(safe-area-inset-top,0px) - env(safe-area-inset-bottom,0px));overflow-y:auto;
     background:var(--paper);border:3px solid var(--line);
     box-shadow:inset 0 0 0 2px var(--paper), 4px 4px 0 rgba(0,0,0,.35);
     padding:20px 18px;
